@@ -713,6 +713,7 @@ function FormularioLancamento({ inicial, onSalvar, onFechar, modoDuplicar = fals
     status: "-", contaId: (contas.find((c) => c.padrao) || contas[0])?.id || "", cartaoId: "", valor: "", observacoes: "", anexo: null,
     escopo: "pessoal", emprestimo: false, viagemId: "", parcelado: false, valorTotalParcelamento: "", qtdParcelas: "", parcelaAtual: "1",
     origem: "salario",
+    recorrente: false, recorrenteFim: "",
   };
   const base0 = inicial ? { ...inicial, origem: inicial.origem || (inicial.tipo === "receita" ? origemDe(inicial) : "salario") } : vazio;
   const [f, setF] = useState(base0);
@@ -802,6 +803,7 @@ function FormularioLancamento({ inicial, onSalvar, onFechar, modoDuplicar = fals
 
   const categorias = todasCategorias(f.tipo, categoriasDespesa, categoriasReceita);
   const podeParcelar = f.tipo === "despesa" && (!inicial || modoDuplicar);
+  const podeRepetir = !inicial || modoDuplicar;
 
   return (
     <form onSubmit={submeter} className="form-lancamento">
@@ -891,9 +893,26 @@ function FormularioLancamento({ inicial, onSalvar, onFechar, modoDuplicar = fals
         </Campo>
       )}
 
-      {podeParcelar && (
-        <div className="span-2" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: pal.texto }}>
-          <input type="checkbox" checked={f.parcelado} onChange={(e) => setF({ ...f, parcelado: e.target.checked })} /> Parcelado
+      {(podeParcelar || podeRepetir) && (
+        <div className="span-2">
+          <div style={{ fontSize: 12, color: pal.textoSuave, marginBottom: 6 }}>Como se repete?</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[["unica", "Única"], ["parcelada", "Parcelada", !podeParcelar], ["mensal", "Todo mês"]].filter((o) => !o[2]).map(([v, rotulo]) => {
+              const atual = f.parcelado ? "parcelada" : f.recorrente ? "mensal" : "unica";
+              return (
+                <button key={v} type="button" onClick={() => setF({ ...f, parcelado: v === "parcelada", recorrente: v === "mensal" })}
+                  style={{ flex: 1, padding: "7px", borderRadius: 8, border: `1px solid ${atual === v ? "transparent" : pal.borda}`, background: atual === v ? pal.texto : "transparent", color: atual === v ? pal.fundo : pal.textoSuave, fontSize: 12.5, fontWeight: 500, cursor: "pointer" }}>{rotulo}</button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {f.recorrente && (
+        <div className="span-2" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 12, color: pal.textoSuave }}>
+            Este lançamento será repetido todo dia {f.data ? parseInt(f.data.slice(8, 10), 10) : "—"} dos meses seguintes, automaticamente. Pode pausar ou encerrar depois em "Recorrentes".
+          </div>
+          <Campo label="Termina em (opcional)"><input type="month" value={f.recorrenteFim} min={f.data ? f.data.slice(0, 7) : undefined} onChange={(e) => setF({ ...f, recorrenteFim: e.target.value })} style={estiloInput(pal)} /></Campo>
         </div>
       )}
       {f.parcelado && (
@@ -1929,10 +1948,10 @@ function FaturaCartao({ cartao, onFechar }) {
    12b. RECORRENTES
    ============================================================ */
 function PainelRecorrentes() {
-  const { recorrentes, contas, cartoes, lancamentos, adicionarRecorrente, editarRecorrente, excluirRecorrente, pal, cor, categoriasDespesa } = useApp();
+  const { recorrentes, contas, cartoes, lancamentos, adicionarRecorrente, editarRecorrente, excluirRecorrente, pal, cor, categoriasDespesa, categoriasReceita } = useApp();
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState(null);
-  const [novo, setNovo] = useState({ descricao: "", categoria: categoriasDespesa[0].nome, valor: "", diaDoMes: "10", contaId: (contas.find((c) => c.padrao) || contas[0])?.id || "", cartaoId: "" });
+  const [novo, setNovo] = useState({ descricao: "", categoria: categoriasDespesa[0].nome, valor: "", diaDoMes: "10", contaId: (contas.find((c) => c.padrao) || contas[0])?.id || "", cartaoId: "", tipo: "despesa", dataFim: "" });
   const [excluirId, setExcluirId] = useState(null);
   const [sugestoesIgnoradas, setSugestoesIgnoradas] = useState(new Set());
 
@@ -1965,8 +1984,8 @@ function PainelRecorrentes() {
   };
   const ignorarSugestao = (chave) => setSugestoesIgnoradas((old) => new Set([...old, chave]));
 
-  const abrirNovo = () => { setEditando(null); setNovo({ descricao: "", categoria: categoriasDespesa[0].nome, valor: "", diaDoMes: "10", contaId: (contas.find((c) => c.padrao) || contas[0])?.id || "", cartaoId: "" }); setModalAberto(true); };
-  const abrirEdicao = (r) => { setEditando(r); setNovo({ descricao: r.descricao, categoria: r.categoria, valor: String(r.valor), diaDoMes: String(r.diaDoMes), contaId: r.contaId || "", cartaoId: r.cartaoId || "" }); setModalAberto(true); };
+  const abrirNovo = () => { setEditando(null); setNovo({ descricao: "", categoria: categoriasDespesa[0].nome, valor: "", diaDoMes: "10", contaId: (contas.find((c) => c.padrao) || contas[0])?.id || "", cartaoId: "", tipo: "despesa", dataFim: "" }); setModalAberto(true); };
+  const abrirEdicao = (r) => { setEditando(r); setNovo({ descricao: r.descricao, categoria: r.categoria, valor: String(r.valor), diaDoMes: String(r.diaDoMes), contaId: r.contaId || "", cartaoId: r.cartaoId || "", tipo: r.tipo || "despesa", dataFim: r.dataFim || "" }); setModalAberto(true); };
 
   const submeter = (e) => {
     e.preventDefault();
@@ -1981,7 +2000,7 @@ function PainelRecorrentes() {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
-        <div className="titulo-serif" style={{ fontSize: 16, fontWeight: 600, color: pal.texto }}>Despesas recorrentes</div>
+        <div className="titulo-serif" style={{ fontSize: 16, fontWeight: 600, color: pal.texto }}>Recorrentes (despesas e receitas)</div>
         <Botao onClick={abrirNovo}><Plus size={15} /> Nova recorrente</Botao>
       </div>
       <div style={{ fontSize: 12.5, color: pal.textoSuave, marginBottom: 14 }}>
@@ -2017,27 +2036,36 @@ function PainelRecorrentes() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 500, color: pal.texto }}>{r.descricao}</div>
               <div style={{ fontSize: 12, color: pal.textoSuave }}>
-                {r.categoria} · todo dia {r.diaDoMes} · {contas.find((c) => c.id === r.contaId)?.nome || "—"}
+                {r.tipo === "receita" ? "Receita · " : ""}{r.categoria} · todo dia {r.diaDoMes} · {contas.find((c) => c.id === r.contaId)?.nome || "—"}
+                {r.dataFim ? ` · até ${mesLabel(r.dataFim)}` : ""}
                 {r.ultimoMesGerado ? ` · último gerado: ${mesLabel(r.ultimoMesGerado)}` : ""}
+                {r.pausada ? " · PAUSADA" : ""}
               </div>
             </div>
-            <div className="num-tab" style={{ fontSize: 14, fontWeight: 600, color: pal.texto }}>{formatarMoeda(r.valor)}</div>
+            <div className="num-tab" style={{ fontSize: 14, fontWeight: 600, color: r.tipo === "receita" ? VERDE : pal.texto, opacity: r.pausada ? 0.5 : 1 }}>{formatarMoeda(r.valor)}</div>
+            <button onClick={() => editarRecorrente(r.id, { pausada: !r.pausada })} title={r.pausada ? "Retomar" : "Pausar"} style={{ border: "none", background: "transparent", color: pal.textoSuave, cursor: "pointer", padding: 5, fontSize: 11.5 }}>{r.pausada ? "Retomar" : "Pausar"}</button>
             <button onClick={() => abrirEdicao(r)} style={{ border: "none", background: "transparent", color: cor, cursor: "pointer", padding: 5 }}><Pencil size={14} /></button>
             <button onClick={() => setExcluirId(r.id)} style={{ border: "none", background: "transparent", color: VERMELHO, cursor: "pointer", padding: 5 }}><Trash2 size={14} /></button>
           </div>
         ))}
       </Cartao>
       {modalAberto && (
-        <Modal titulo={editando ? "Editar recorrente" : "Nova despesa recorrente"} onFechar={() => { setModalAberto(false); setEditando(null); }}>
+        <Modal titulo={editando ? "Editar recorrente" : "Nova recorrente"} onFechar={() => { setModalAberto(false); setEditando(null); }}>
           <form onSubmit={submeter} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div style={{ gridColumn: "span 2" }}>
               <Campo label="Descrição"><input type="text" placeholder="Ex.: Internet, Energia, Aluguel..." value={novo.descricao} onChange={(e) => setNovo({ ...novo, descricao: e.target.value })} style={estiloInput(pal)} /></Campo>
             </div>
-            <Campo label="Categoria">
-              <select value={novo.categoria} onChange={(e) => setNovo({ ...novo, categoria: e.target.value })} style={estiloInput(pal)}>
-                {categoriasDespesa.map((c) => <option key={c.nome} value={c.nome}>{c.nome}</option>)}
+            <Campo label="Tipo">
+              <select value={novo.tipo} onChange={(e) => setNovo({ ...novo, tipo: e.target.value, categoria: (e.target.value === "receita" ? categoriasReceita : categoriasDespesa)[0].nome })} style={estiloInput(pal)}>
+                <option value="despesa">Despesa</option><option value="receita">Receita</option>
               </select>
             </Campo>
+            <Campo label="Categoria">
+              <select value={novo.categoria} onChange={(e) => setNovo({ ...novo, categoria: e.target.value })} style={estiloInput(pal)}>
+                {(novo.tipo === "receita" ? categoriasReceita : categoriasDespesa).map((c) => <option key={c.nome} value={c.nome}>{c.nome}</option>)}
+              </select>
+            </Campo>
+            <Campo label="Termina em (opcional)"><input type="month" value={novo.dataFim} onChange={(e) => setNovo({ ...novo, dataFim: e.target.value })} style={estiloInput(pal)} /></Campo>
             <Campo label="Valor (R$)"><input type="text" inputMode="decimal" className="num-tab" value={novo.valor} onChange={(e) => setNovo({ ...novo, valor: e.target.value })} style={estiloInput(pal)} /></Campo>
             <Campo label="Todo dia"><input type="number" min="1" max="31" value={novo.diaDoMes} onChange={(e) => setNovo({ ...novo, diaDoMes: e.target.value })} style={estiloInput(pal)} /></Campo>
             <Campo label="Conta">
@@ -3290,12 +3318,15 @@ export default function App() {
       const recAtualizados = rec.map((r) => {
         if (r.ultimoMesGerado === mAtual) return r;
         const mesesParaGerar = r.ultimoMesGerado ? mesesEntre(r.ultimoMesGerado, mAtual) : [mAtual];
-        mesesParaGerar.forEach((m) => {
+        // pausada: não gera nada (e não acumula meses para depois); com data final, para nela
+        const mesesAtivos = r.pausada ? [] : mesesParaGerar.filter((m) => !r.dataFim || m <= r.dataFim);
+        mesesAtivos.forEach((m) => {
           const dia = String(Math.min(r.diaDoMes, diasNoMes(m))).padStart(2, "0");
           lancFinal = [{
-            id: genId("rec"), data: `${m}-${dia}`, tipo: "despesa", categoria: r.categoria, descricao: r.descricao,
+            id: genId("rec"), data: `${m}-${dia}`, tipo: r.tipo || "despesa", categoria: r.categoria, descricao: r.descricao,
             pessoa: "", status: "-", contaId: r.contaId, cartaoId: r.cartaoId || null, valor: r.valor, escopo: "pessoal",
             observacoes: "Gerado automaticamente (recorrente)", anexo: null, parcelaInfo: null, recorrenteId: r.id,
+            ...(r.tipo === "receita" ? { origem: r.origem || "salario" } : {}),
           }, ...lancFinal];
         });
         return { ...r, ultimoMesGerado: mAtual };
@@ -3389,15 +3420,24 @@ export default function App() {
       mostrarToast(`${novos.length} parcelas criadas`);
       return;
     }
+    const recId = f.recorrente ? genId("rec") : null;
     const novo = {
       id: genId("l"), data: f.data, tipo: f.tipo, categoria: f.categoria, descricao: f.descricao.trim(),
       pessoa: (f.pessoa || "").trim(), status: f.status, contaId: f.contaId, cartaoId: f.cartaoId || null,
-      valor: valorNum, observacoes: f.observacoes || "", anexo: f.anexo || null, escopo: f.escopo || "pessoal", emprestimo: !!f.emprestimo, viagemId: f.viagemId || null, parcelaInfo: null, recorrenteId: null,
+      valor: valorNum, observacoes: f.observacoes || "", anexo: f.anexo || null, escopo: f.escopo || "pessoal", emprestimo: !!f.emprestimo, viagemId: f.viagemId || null, parcelaInfo: null, recorrenteId: recId,
       ...(f.tipo === "receita" ? { origem: f.origem || "salario" } : {}),
     };
     salvar("lancamentos", [novo, ...lancamentos], setLancamentosState);
+    if (recId) {
+      salvar("recorrentes", [...recorrentes, {
+        id: recId, tipo: f.tipo, descricao: novo.descricao, categoria: f.categoria, valor: valorNum,
+        diaDoMes: parseInt(f.data.slice(8, 10), 10), contaId: f.contaId, cartaoId: f.cartaoId || "",
+        origem: f.tipo === "receita" ? (f.origem || "salario") : undefined,
+        dataFim: f.recorrenteFim || "", pausada: false, ultimoMesGerado: f.data.slice(0, 7),
+      }], setRecorrentesState);
+    }
     setMesSelecionado(f.data.slice(0, 7));
-    mostrarToast("Lançamento adicionado");
+    mostrarToast(recId ? "Lançamento criado e programado para todo mês" : "Lançamento adicionado");
   };
 
   const adicionarViagem = (dados) => salvar("viagens", [...viagens, { ...dados, id: genId("viagem") }], setViagensState);
