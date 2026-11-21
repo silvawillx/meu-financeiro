@@ -1,4 +1,4 @@
-const CACHE_NAME = "meu-financeiro-v2";
+const CACHE_NAME = "meu-financeiro-v3";
 const APP_SHELL = ["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -17,6 +17,9 @@ self.addEventListener("activate", (event) => {
 // e cai pro cache quando estiver offline.
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  // Só guarda em cache arquivos do próprio app. Chamadas ao Supabase (seus dados
+  // financeiros e o login) nunca passam pelo cache do navegador.
+  if (new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(
     fetch(event.request)
       .then((resposta) => {

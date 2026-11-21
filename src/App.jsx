@@ -2926,6 +2926,11 @@ function PainelConfiguracoes() {
         </div>
       </Cartao>
       <Cartao style={{ padding: 18, maxWidth: 420, display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: pal.texto }}>Conta</div>
+        <div style={{ fontSize: 11.5, color: pal.textoSuave }}>Seus dados ficam salvos na nuvem e só aparecem depois do login.</div>
+        <Botao variante="secundario" style={{ alignSelf: "flex-start" }} onClick={() => window.storage.sair && window.storage.sair()}>Sair da conta</Botao>
+      </Cartao>
+      <Cartao style={{ padding: 18, maxWidth: 420, display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: pal.texto }}>Segurança — trava por PIN</div>
         <div style={{ fontSize: 11.5, color: pal.textoSuave }}>
           É uma trava simples pra quem pegar seu computador/celular não abrir seus dados de primeira — não é criptografia de verdade, então não use pra dados extremamente sensíveis.
@@ -3120,6 +3125,13 @@ export default function App() {
     setToast({ msg, acao });
     toastTimeoutRef.current = setTimeout(() => setToast(null), duracaoMs);
   };
+
+  // Se o Supabase recusar uma gravação (sem internet, sessão expirada...), avisa.
+  useEffect(() => {
+    const aviso = () => mostrarToast("Não consegui salvar na nuvem. Confira a internet e tente de novo.", null, 6000);
+    window.addEventListener("storage-erro", aviso);
+    return () => window.removeEventListener("storage-erro", aviso);
+  }, []);
 
   const salvar = async (chave, valor, setter) => {
     setter(valor);
