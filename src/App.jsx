@@ -435,20 +435,47 @@ function Sidebar({ paginaAtiva, onNavegar, aberta, onFechar }) {
   );
 }
 
+function BarraInferior({ paginaAtiva, onNavegar, onNovo, onMais }) {
+  const { pal, cor } = useApp();
+  const item = (id, rotulo, Icone) => {
+    const ativo = paginaAtiva === id;
+    return (
+      <button key={id} onClick={() => onNavegar(id)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, border: "none", background: "none", color: ativo ? cor : pal.textoSuave, fontSize: 10.5, fontWeight: ativo ? 600 : 500, cursor: "pointer", padding: "8px 0" }}>
+        <Icone size={20} /> {rotulo}
+      </button>
+    );
+  };
+  return (
+    <nav className="barra-inferior" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, background: pal.cartao, borderTop: `1px solid ${pal.borda}`, alignItems: "center", paddingBottom: "env(safe-area-inset-bottom)" }}>
+      {item("dashboard", "Início", LayoutDashboard)}
+      {item("lancamentos", "Lançamentos", Receipt)}
+      <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+        <button onClick={onNovo} aria-label="Novo lançamento" style={{ width: 52, height: 52, marginTop: -22, borderRadius: "50%", border: `3px solid ${pal.cartao}`, background: cor, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 12px rgba(0,0,0,.25)", cursor: "pointer" }}>
+          <Plus size={24} />
+        </button>
+      </div>
+      {item("cartoes", "Cartões", CreditCard)}
+      <button onClick={onMais} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, border: "none", background: "none", color: pal.textoSuave, fontSize: 10.5, fontWeight: 500, cursor: "pointer", padding: "8px 0" }}>
+        <Menu size={20} /> Mais
+      </button>
+    </nav>
+  );
+}
+
 /* ============================================================
    7. DASHBOARD
    ============================================================ */
 function CardMetrica({ icone: Icone, label, valor, cor, sub }) {
   const { pal } = useApp();
   return (
-    <Cartao style={{ padding: 16, flex: "1 1 160px" }}>
+    <Cartao style={{ padding: 16, minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
         <div style={{ width: 28, height: 28, borderRadius: 7, background: `${cor}1A`, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <Icone size={15} color={cor} />
         </div>
         <div style={{ fontSize: 11.5, color: pal.textoSuave, textTransform: "uppercase", letterSpacing: "0.03em" }}>{label}</div>
       </div>
-      <div className="num-tab" style={{ fontSize: 21, fontWeight: 600, color: pal.texto }}>{valor}</div>
+      <div className="num-tab kpi-valor" style={{ fontSize: 21, fontWeight: 600, color: pal.texto }}>{valor}</div>
       {sub && <div style={{ fontSize: 11.5, color: pal.textoSuave, marginTop: 3 }}>{sub}</div>}
     </Cartao>
   );
@@ -529,7 +556,7 @@ function PainelDashboard() {
           </div>
         </div>
       )}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 20 }}>
+      <div className="grid-kpi" style={{ marginBottom: 20 }}>
         <CardMetrica icone={Wallet} label="Receita" valor={formatarMoeda(receita)} cor={VERDE} />
         <CardMetrica icone={Receipt} label="Gastos" valor={formatarMoeda(gasto)} cor={VERMELHO} />
         <CardMetrica icone={saldo >= 0 ? ArrowUp : ArrowDown} label={ehMesAtual ? "Saldo previsto" : "Saldo"} valor={formatarMoeda(saldo)} cor={saldo >= 0 ? VERDE : VERMELHO} sub={ehMesAtual ? `Até hoje: ${formatarMoeda(saldoAteHoje)}` : undefined} />
@@ -550,7 +577,7 @@ function PainelDashboard() {
           </div>
         </Cartao>
       )}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 24 }}>
+      <div className="grid-kpi" style={{ marginBottom: 24 }}>
         <CardMetrica icone={BarChart3} label="Média/dia" valor={formatarMoeda(mediaDia)} cor={cor} />
         <CardMetrica icone={Calendar} label="Dias restantes" valor={ehMesAtual ? diasRestantes : "—"} cor={cor} sub={ehMesAtual ? "no mês" : "mês encerrado"} />
         <CardMetrica icone={Receipt} label="Lançamentos" valor={doMes.length} cor={cor} />
@@ -925,7 +952,7 @@ function PainelLancamentos() {
     lancamentos, contas, cartoes, mesSelecionado, mesesDisponiveis, setMesSelecionado,
     adicionarLancamento, editarLancamento, editarLancamentoGrupo, excluirLancamento, importarLancamentos,
     excluirLancamentosEmLote, editarLancamentosEmLote, pal, cor, mostrarToast,
-    categoriasDespesa, categoriasReceita,
+    categoriasDespesa, categoriasReceita, pedidoNovoLanc, consumirPedidoNovoLanc,
   } = useApp();
 
   const [busca, setBusca] = useState("");
@@ -946,6 +973,9 @@ function PainelLancamentos() {
   const inputOFXRef = useRef(null);
 
   useEffect(() => { setSelecionados(new Set()); }, [mesSelecionado]);
+
+  // botão "+" da barra inferior: abre o formulário de novo lançamento
+  useEffect(() => { if (pedidoNovoLanc) { setModalAberto(true); consumirPedidoNovoLanc(); } }, [pedidoNovoLanc]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -3088,6 +3118,7 @@ export default function App() {
   const [clientIdDrive, setClientIdDriveState] = useState("");
   const [pin, setPinState] = useState("");
   const [desbloqueado, setDesbloqueado] = useState(true);
+  const [pedidoNovoLanc, setPedidoNovoLanc] = useState(false);
   const toastTimeoutRef = useRef(null);
   const lancamentosRef = useRef([]);
   const contasRef = useRef([]);
@@ -3099,6 +3130,9 @@ export default function App() {
   useEffect(() => { cartoesRef.current = cartoes; }, [cartoes]);
   useEffect(() => { recorrentesRef.current = recorrentes; }, [recorrentes]);
   useEffect(() => { favoritosRef.current = favoritos; }, [favoritos]);
+
+  const pedirNovoLancamento = () => { setPagina("lancamentos"); setPedidoNovoLanc(true); };
+  const consumirPedidoNovoLanc = () => setPedidoNovoLanc(false);
 
   const mostrarToast = (msg, acao = null, duracaoMs = acao ? 5000 : 2600) => {
     clearTimeout(toastTimeoutRef.current);
@@ -3515,6 +3549,7 @@ export default function App() {
     tema, setTema,
     cor, setCor,
     pal, mostrarToast, setPagina,
+    pedidoNovoLanc, consumirPedidoNovoLanc,
   };
 
   if (!pronto) {
@@ -3546,7 +3581,17 @@ export default function App() {
           .form-lancamento .span-2 { grid-column: span 2; }
           ::-webkit-scrollbar { width: 8px; height: 8px; }
           ::-webkit-scrollbar-thumb { background: ${pal.borda}; border-radius: 4px; }
+          .grid-kpi { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+          .botao-menu-mobile, .barra-inferior { display: none; }
+          .cabecalho { padding-top: calc(18px + env(safe-area-inset-top)) !important; }
           @media (max-width: 760px) {
+            .grid-kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+            .kpi-valor { font-size: 17px !important; }
+            .botao-menu-mobile { display: flex !important; }
+            .so-desktop { display: none !important; }
+            .cabecalho { padding-left: 14px !important; padding-right: 14px !important; }
+            .conteudo { padding: 16px 14px calc(96px + env(safe-area-inset-bottom)) !important; }
+            .barra-inferior { display: flex !important; }
             .sidebar { position: fixed; left: -220px; top: 0; bottom: 0; z-index: 50; transition: left .2s; box-shadow: 4px 0 14px rgba(0,0,0,0.15); }
             .sidebar-aberta { left: 0 !important; }
             .overlay-mobile { display: block !important; }
@@ -3555,7 +3600,7 @@ export default function App() {
             .form-lancamento .span-2 { grid-column: span 1 !important; }
           }
           @media print {
-            .sidebar, .no-print, .botao-menu-mobile { display: none !important; }
+            .sidebar, .no-print, .botao-menu-mobile, .barra-inferior { display: none !important; }
             body, #root { background: #fff !important; }
             #area-impressao { max-width: 100% !important; padding: 0 !important; }
           }
@@ -3564,22 +3609,23 @@ export default function App() {
         <Sidebar paginaAtiva={pagina} onNavegar={setPagina} aberta={sidebarAberta} onFechar={() => setSidebarAberta(false)} />
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 24px", borderBottom: `1px solid ${pal.borda}`, flexWrap: "wrap", gap: 10 }}>
+          <div className="cabecalho" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 24px", borderBottom: `1px solid ${pal.borda}`, flexWrap: "wrap", gap: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <button className="botao-menu-mobile" onClick={() => setSidebarAberta(true)} style={{ display: "none", border: "none", background: "none", color: pal.texto, cursor: "pointer" }}><Menu size={20} /></button>
+              <button className="botao-menu-mobile" aria-label="Abrir menu" onClick={() => setSidebarAberta(true)} style={{ border: "none", background: "none", color: pal.texto, cursor: "pointer", padding: 4 }}><Menu size={22} /></button>
               <div className="titulo-serif" style={{ fontSize: 19, fontWeight: 600 }}>{tituloPagina}</div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }} className="no-print">
-              <button onClick={() => window.print()} title="Imprimir ou salvar como PDF" style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: `1px solid ${pal.borda}`, color: pal.textoSuave, borderRadius: 8, padding: "8px 12px", fontSize: 13, cursor: "pointer" }}>
+              <button className="so-desktop" onClick={() => window.print()} title="Imprimir ou salvar como PDF" style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: `1px solid ${pal.borda}`, color: pal.textoSuave, borderRadius: 8, padding: "8px 12px", fontSize: 13, cursor: "pointer" }}>
                 <Printer size={14} /> Imprimir / PDF
               </button>
               <EntradaRapida />
             </div>
           </div>
-          <div style={{ padding: "20px 24px 60px", maxWidth: 1080 }} id="area-impressao">
+          <div className="conteudo" style={{ padding: "20px 24px 60px", maxWidth: 1080 }} id="area-impressao">
             <PaginaAtual />
           </div>
         </div>
+        <BarraInferior paginaAtiva={pagina} onNavegar={setPagina} onNovo={pedirNovoLancamento} onMais={() => setSidebarAberta(true)} />
         <Toast toast={toast} onFechar={() => { clearTimeout(toastTimeoutRef.current); setToast(null); }} />
       </div>
     </AppCtx.Provider>
