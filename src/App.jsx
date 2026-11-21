@@ -249,26 +249,6 @@ function migrarDadosAntigos(gastosAntigos, rendasAntigas) {
   return { contas, lancamentos };
 }
 
-const SEED_GASTOS_ANTIGOS = [
-  { data: "2026-06-01", categoria: "Outros", descricao: "Cruchyrool", pessoa: "Yago", status: "Pago", valor: 5.0 },
-  { data: "2026-06-01", categoria: "Lazer", descricao: "sair de casa", pessoa: "Eu", status: "-", valor: 200.0 },
-  { data: "2026-06-01", categoria: "Moradia", descricao: "Internet", pessoa: "Internet", status: "Pago", valor: 89.9 },
-  { data: "2026-06-01", categoria: "Saúde", descricao: "Pag bank", pessoa: "academia", status: "-", valor: 429.45 },
-  { data: "2026-06-01", categoria: "Outros", descricao: "Placa mãe", pessoa: "Titio", status: "Pago", observacoes: "6/6 pago", valor: 143.35 },
-  { data: "2026-06-01", categoria: "Dívidas/Cartão", descricao: "jeitto", pessoa: "cartão", status: "Pago", valor: 21.41 },
-  { data: "2026-06-01", categoria: "Dívidas/Cartão", descricao: "cartão", pessoa: "embaixador", status: "A pagar", observacoes: "4/6 a pagar", valor: 82.63 },
-  { data: "2026-06-01", categoria: "Outros", descricao: "felipe", pessoa: "premier", status: "Pago", valor: 15.0 },
-  { data: "2026-07-01", categoria: "Dívidas/Cartão", descricao: "picpay", pessoa: "renegociação", status: "Pago", valor: 131.12 },
-  { data: "2026-07-01", categoria: "Outros", descricao: "Cruchyrool", pessoa: "Yago", status: "Pago", valor: 5.0 },
-  { data: "2026-07-01", categoria: "Lazer", descricao: "sair de casa", pessoa: "Eu", status: "-", valor: 200.0 },
-  { data: "2026-07-01", categoria: "Moradia", descricao: "Internet", pessoa: "Internet", status: "Pago", valor: 89.9 },
-  { data: "2026-07-01", categoria: "Saúde", descricao: "Pag bank", pessoa: "academia", status: "Pago", valor: 150.0 },
-  { data: "2026-07-01", categoria: "Outros", descricao: "pastor", pessoa: "carregador", status: "A pagar", valor: 30.0 },
-  { data: "2026-07-01", categoria: "Dívidas/Cartão", descricao: "jeitto", pessoa: "cartão", status: "Pago", valor: 548.19 },
-  { data: "2026-07-01", categoria: "Dívidas/Cartão", descricao: "cartão", pessoa: "embaixador", status: "A pagar", observacoes: "5/6 a pagar", valor: 82.63 },
-  { data: "2026-07-01", categoria: "Outros", descricao: "felipe", pessoa: "premier", status: "Pago", valor: 15.0 },
-].map((g) => ({ ...g, id: genId("seed") }));
-const SEED_RENDAS_ANTIGAS = { "2026-06": 2000, "2026-07": 2000 };
 
 /* ============================================================
    4. CONTEXT
@@ -3165,7 +3145,7 @@ export default function App() {
           const migrado = migrarDadosAntigos(gastosAntigos, rendasAntigas);
           lanc = migrado.lancamentos; cts = migrado.contas;
         } else {
-          const migrado = migrarDadosAntigos(SEED_GASTOS_ANTIGOS, SEED_RENDAS_ANTIGAS);
+          const migrado = migrarDadosAntigos([], {}); // conta nova começa vazia, só com a "Conta principal"
           lanc = migrado.lancamentos; cts = migrado.contas;
         }
         await window.storage.set("lancamentos", JSON.stringify(lanc), false);

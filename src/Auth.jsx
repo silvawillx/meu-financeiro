@@ -2,6 +2,25 @@ import { useEffect, useState } from "react";
 import { supabase } from "./supabase.js";
 import { carregarTudo, limpar } from "./storage-shim.js";
 
+// Faixa fixa no topo quando o aparelho fica sem internet: dá pra ler os dados,
+// mas alterações não são salvas na nuvem até a conexão voltar.
+function AvisoOffline() {
+  const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
+  }, []);
+  if (online) return null;
+  return (
+    <div role="status" style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 1000, padding: "calc(6px + env(safe-area-inset-top)) 12px 6px", background: "#B3261E", color: "#fff", fontSize: 12.5, textAlign: "center", fontFamily: "Inter, sans-serif" }}>
+      Sem internet — você pode consultar, mas alterações não serão salvas.
+    </div>
+  );
+}
+
 // Só login (e-mail + senha). O cadastro público fica desligado no Supabase:
 // a única conta é a que você criou em Authentication > Users.
 export default function Auth({ children }) {
@@ -50,7 +69,7 @@ export default function Auth({ children }) {
   const caixa = { minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, background: "#F7F5F0", fontFamily: "Inter, sans-serif", color: "#1B2A4A" };
   const input = { width: "100%", padding: "11px 12px", fontSize: 16, border: "1px solid #D9D4C7", borderRadius: 8, marginBottom: 10, background: "#fff" };
 
-  if (estado === "pronto") return children;
+  if (estado === "pronto") return <>{children}<AvisoOffline /></>;
   if (estado === "carregando") return <div style={caixa}>Carregando seu financeiro...</div>;
   if (estado === "erro") {
     return (
