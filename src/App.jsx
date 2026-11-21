@@ -30,6 +30,23 @@ const CATEGORIAS_RECEITA_PADRAO = [
   { nome: "Freelance", cor: "#2F5D8A" },
   { nome: "Outros", cor: "#6B6459" },
 ];
+// Origem da receita: separa o que vem do trabalho do que vem "por fora".
+const ORIGENS_RECEITA = [
+  { id: "salario", nome: "Salário", cor: "#3E6F5C", trabalho: true },
+  { id: "extra", nome: "Renda extra", cor: "#2F5D8A", trabalho: false },
+  { id: "rendimentos", nome: "Rendimentos", cor: "#C98A3A", trabalho: false },
+  { id: "outras", nome: "Outras", cor: "#6B6459", trabalho: false },
+];
+// Receitas antigas não têm "origem": deduz pela categoria.
+const origemDe = (l) => {
+  if (l.origem) return l.origem;
+  const c = (l.categoria || "").toLowerCase();
+  if (c.includes("sal")) return "salario";
+  if (c.includes("free") || c.includes("extra") || c.includes("bico")) return "extra";
+  if (c.includes("rendiment") || c.includes("dividend") || c.includes("juros")) return "rendimentos";
+  return "outras";
+};
+
 const todasCategorias = (tipo, categoriasDespesa, categoriasReceita) => (tipo === "receita" ? categoriasReceita : categoriasDespesa);
 const corCategoria = (nome, categorias) => {
   const c = (categorias || []).find((c) => c.nome === nome);
@@ -491,6 +508,11 @@ function PainelDashboard() {
   const gasto = doMes.filter((l) => l.tipo === "despesa").reduce((s, l) => s + l.valor, 0);
   const saldo = receita - gasto;
   const economiaPct = receita > 0 ? (saldo / receita) * 100 : 0;
+  const porOrigem = ORIGENS_RECEITA.map((o) => ({
+    ...o, valor: doMes.filter((l) => l.tipo === "receita" && origemDe(l) === o.id).reduce((s, l) => s + l.valor, 0),
+  }));
+  const receitaTrabalho = porOrigem.filter((o) => o.trabalho).reduce((s, o) => s + o.valor, 0);
+  const receitaFora = receita - receitaTrabalho;
 
   const hojeD = new Date();
   const ehMesAtual = mesSelecionado === mesAtual();
@@ -562,6 +584,27 @@ function PainelDashboard() {
         <CardMetrica icone={saldo >= 0 ? ArrowUp : ArrowDown} label={ehMesAtual ? "Saldo previsto" : "Saldo"} valor={formatarMoeda(saldo)} cor={saldo >= 0 ? VERDE : VERMELHO} sub={ehMesAtual ? `Até hoje: ${formatarMoeda(saldoAteHoje)}` : undefined} />
         <CardMetrica icone={Target} label="Economia" valor={`${economiaPct.toFixed(0)}%`} cor={economiaPct >= 0 ? VERDE : VERMELHO} />
       </div>
+
+      {receita > 0 && (
+        <Cartao style={{ padding: 16, marginBottom: 20 }}>
+          <div style={{ fontSize: 12, color: pal.textoSuave, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 10 }}>De onde veio o dinheiro</div>
+          <div style={{ display: "flex", height: 10, borderRadius: 6, overflow: "hidden", background: pal.borda, marginBottom: 12 }}>
+            {porOrigem.filter((o) => o.valor > 0).map((o) => <div key={o.id} title={o.nome} style={{ width: `${(o.valor / receita) * 100}%`, background: o.cor }} />)}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6, fontSize: 12.5 }}>
+            {porOrigem.map((o) => (
+              <div key={o.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: pal.texto }}>
+                <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: o.cor, marginRight: 6 }} />{o.nome}</span>
+                <span className="num-tab">{formatarMoeda(o.valor)}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${pal.borda}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6, fontSize: 12.5, color: pal.textoSuave }}>
+            <span>Do trabalho: <strong className="num-tab" style={{ color: pal.texto }}>{formatarMoeda(receitaTrabalho)}</strong></span>
+            <span>Fora do trabalho: <strong className="num-tab" style={{ color: pal.texto }}>{formatarMoeda(receitaFora)}</strong></span>
+          </div>
+        </Cartao>
+      )}
 
       {totalAPagar > 0 && (
         <Cartao style={{ padding: 18, marginBottom: 20, cursor: "pointer" }} className="" >
@@ -669,15 +712,17 @@ function FormularioLancamento({ inicial, onSalvar, onFechar, modoDuplicar = fals
     tipo: "despesa", data: hojeISO(), categoria: categoriasDespesa[0].nome, descricao: "", pessoa: "",
     status: "-", contaId: (contas.find((c) => c.padrao) || contas[0])?.id || "", cartaoId: "", valor: "", observacoes: "", anexo: null,
     escopo: "pessoal", emprestimo: false, viagemId: "", parcelado: false, valorTotalParcelamento: "", qtdParcelas: "", parcelaAtual: "1",
+    origem: "salario",
   };
-  const [f, setF] = useState(inicial || vazio);
+  const base0 = inicial ? { ...inicial, origem: inicial.origem || (inicial.tipo === "receita" ? origemDe(inicial) : "salario") } : vazio;
+  const [f, setF] = useState(base0);
   const [sugestaoAplicada, setSugestaoAplicada] = useState("");
   const [duplicataConfirmada, setDuplicataConfirmada] = useState(false);
   const [simuladorAberto, setSimuladorAberto] = useState(false);
 
   useEffect(() => {
     if (!onSujoChange) return;
-    const base = inicial || vazio;
+    const base = base0;
     const sujo = Object.keys(vazio).some((k) => k !== "parcelado" && String(f[k] ?? "") !== String(base[k] ?? ""));
     onSujoChange(sujo);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -782,6 +827,13 @@ function FormularioLancamento({ inicial, onSalvar, onFechar, modoDuplicar = fals
           {categorias.map((c) => <option key={c.nome} value={c.nome}>{c.nome}</option>)}
         </select>
       </Campo>
+      {f.tipo === "receita" && (
+        <Campo label="Origem da receita">
+          <select value={f.origem} onChange={(e) => setF({ ...f, origem: e.target.value })} style={estiloInput(pal)}>
+            {ORIGENS_RECEITA.map((o) => <option key={o.id} value={o.id}>{o.nome}{o.trabalho ? " (trabalho)" : ""}</option>)}
+          </select>
+        </Campo>
+      )}
       <Campo label="Descrição">
         <input type="text" placeholder="Ex.: Mercado, Uber, aluguel..." value={f.descricao} onChange={(e) => { setF({ ...f, descricao: e.target.value }); setSugestaoAplicada(""); }} onBlur={aoSairDescricao} style={estiloInput(pal)} />
         {sugestaoAplicada && <div style={{ fontSize: 11, color: "#2F5D8A", marginTop: 3 }}>🔎 Categoria/conta preenchidas com base no último "{sugestaoAplicada}"</div>}
@@ -3296,6 +3348,7 @@ export default function App() {
       id: genId("l"), data: f.data, tipo: f.tipo, categoria: f.categoria, descricao: f.descricao.trim(),
       pessoa: (f.pessoa || "").trim(), status: f.status, contaId: f.contaId, cartaoId: f.cartaoId || null,
       valor: valorNum, observacoes: f.observacoes || "", anexo: f.anexo || null, escopo: f.escopo || "pessoal", emprestimo: !!f.emprestimo, viagemId: f.viagemId || null, parcelaInfo: null, recorrenteId: null,
+      ...(f.tipo === "receita" ? { origem: f.origem || "salario" } : {}),
     };
     salvar("lancamentos", [novo, ...lancamentos], setLancamentosState);
     setMesSelecionado(f.data.slice(0, 7));
