@@ -855,16 +855,27 @@ function FormularioLancamento({ inicial, onSalvar, onFechar, modoDuplicar = fals
           </select>
         </Campo>
       )}
-      <Campo label="Conta">
-        <select value={f.contaId} onChange={(e) => setF({ ...f, contaId: e.target.value })} style={estiloInput(pal)}>
-          <option value="">Sem conta</option>
-          {contas.filter((c) => !c.arquivada || c.id === f.contaId).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-        </select>
-      </Campo>
-      <Campo label="Cartão (opcional)">
-        <select value={f.cartaoId} onChange={(e) => setF({ ...f, cartaoId: e.target.value })} style={estiloInput(pal)}>
-          <option value="">—</option>
-          {cartoes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+      <Campo label="Pagou com">
+        <select value={f.cartaoId ? `cartao:${f.cartaoId}` : `conta:${f.contaId}`} onChange={(e) => {
+          const [tipo, id] = e.target.value.split(":");
+          if (tipo === "conta") { setF({ ...f, contaId: id, cartaoId: "" }); return; }
+          const cartao = cartoes.find((c) => c.id === id);
+          setF({ ...f, cartaoId: id, contaId: cartao?.contaId || f.contaId });
+        }} style={estiloInput(pal)}>
+          <optgroup label="Conta / Pix / dinheiro">
+            <option value="conta:">Sem conta</option>
+            {contas.filter((c) => !c.arquivada || c.id === f.contaId).map((c) => <option key={c.id} value={`conta:${c.id}`}>{c.nome}</option>)}
+          </optgroup>
+          {cartoes.some((c) => c.tipo !== "debito") && (
+            <optgroup label="Cartão de crédito">
+              {cartoes.filter((c) => c.tipo !== "debito").map((c) => <option key={c.id} value={`cartao:${c.id}`}>{c.nome}</option>)}
+            </optgroup>
+          )}
+          {cartoes.some((c) => c.tipo === "debito") && (
+            <optgroup label="Cartão de débito">
+              {cartoes.filter((c) => c.tipo === "debito").map((c) => <option key={c.id} value={`cartao:${c.id}`}>{c.nome}</option>)}
+            </optgroup>
+          )}
         </select>
       </Campo>
       <Campo label="Status">
@@ -1699,10 +1710,10 @@ function ModalConferenciaSaldo({ conta, saldoCalculado, onFechar, onAjustar }) {
    12. CARTÕES
    ============================================================ */
 function PainelCartoes() {
-  const { cartoes, lancamentos, mesSelecionado, adicionarCartao, editarCartao, excluirCartao, pal, cor } = useApp();
+  const { cartoes, contas, lancamentos, mesSelecionado, adicionarCartao, editarCartao, excluirCartao, pal, cor } = useApp();
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState(null);
-  const [novo, setNovo] = useState({ nome: "", limite: "", fechamento: "", vencimento: "", cor: "#8A3E5C" });
+  const [novo, setNovo] = useState({ nome: "", tipo: "credito", contaId: "", limite: "", fechamento: "", vencimento: "", cor: "#8A3E5C" });
   const [excluirId, setExcluirId] = useState(null);
   const [faturaAberta, setFaturaAberta] = useState(null);
 
@@ -1715,13 +1726,15 @@ function PainelCartoes() {
   };
   const qtdLancamentosVinculados = (cartaoId) => lancamentos.filter((l) => l.cartaoId === cartaoId).length;
 
-  const abrirNovo = () => { setEditando(null); setNovo({ nome: "", limite: "", fechamento: "", vencimento: "", cor: "#8A3E5C" }); setModalAberto(true); };
-  const abrirEdicao = (c) => { setEditando(c); setNovo({ nome: c.nome, limite: String(c.limite ?? ""), fechamento: String(c.fechamento ?? ""), vencimento: String(c.vencimento ?? ""), cor: c.cor }); setModalAberto(true); };
+  const abrirNovo = () => { setEditando(null); setNovo({ nome: "", tipo: "credito", contaId: (contas.find((c) => c.padrao) || contas[0])?.id || "", limite: "", fechamento: "", vencimento: "", cor: "#8A3E5C" }); setModalAberto(true); };
+  const abrirEdicao = (c) => { setEditando(c); setNovo({ tipo: c.tipo || "credito", contaId: c.contaId || "", nome: c.nome, limite: String(c.limite ?? ""), fechamento: String(c.fechamento ?? ""), vencimento: String(c.vencimento ?? ""), cor: c.cor }); setModalAberto(true); };
 
   const submeter = (e) => {
     e.preventDefault();
-    if (!novo.nome.trim() || !novo.limite) return;
-    const dados = { ...novo, limite: parseFloat(novo.limite) || 0 };
+    const debito = novo.tipo === "debito";
+    if (!novo.nome.trim() || (!debito && !novo.limite) || (debito && !novo.contaId)) return;
+    const dados = { ...novo, limite: debito ? 0 : parseFloat(novo.limite) || 0 };
+    if (debito) { dados.fechamento = ""; dados.vencimento = ""; }
     if (editando) editarCartao(editando.id, dados);
     else adicionarCartao(dados);
     setModalAberto(false);
@@ -1741,6 +1754,7 @@ function PainelCartoes() {
         {cartoes.length === 0 && <div style={{ fontSize: 13, color: pal.textoSuave }}>Nenhum cartão cadastrado ainda.</div>}
         {cartoes.map((c) => {
           const usado = usoCartao(c);
+          const ehDebito = c.tipo === "debito";
           const pct = c.limite > 0 ? Math.min(100, (usado / c.limite) * 100) : 0;
           const ciclo = cicloFatura(c, mesSelecionado);
           return (
@@ -1752,7 +1766,14 @@ function PainelCartoes() {
                   <button onClick={() => setExcluirId(c.id)} style={{ border: "none", background: "transparent", color: VERMELHO, cursor: "pointer" }}><Trash2 size={13} /></button>
                 </div>
               </div>
-              <div style={{ fontSize: 11, color: pal.textoSuave, marginBottom: 10 }}>Fecha dia {c.fechamento || "—"} · Vence dia {c.vencimento || "—"}</div>
+              {ehDebito ? (
+                <>
+                  <div style={{ fontSize: 11, color: pal.textoSuave, marginBottom: 10 }}>Débito · {contas.find((x) => x.id === c.contaId)?.nome || "sem conta vinculada"}</div>
+                  <div className="num-tab" style={{ fontSize: 18, fontWeight: 600, color: pal.texto }}>{formatarMoeda(usado)}</div>
+                  <div style={{ fontSize: 11, color: pal.textoSuave, marginTop: 2 }}>gasto no mês (já sai do saldo da conta)</div>
+                </>
+              ) : (<>
+              <div style={{ fontSize: 11, color: pal.textoSuave, marginBottom: 10 }}>Crédito · Fecha dia {c.fechamento || "—"} · Vence dia {c.vencimento || "—"}</div>
               <Progresso valor={usado} max={c.limite} corBase={c.cor} />
               <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11.5 }}>
                 <span className="num-tab" style={{ color: pal.textoSuave }}>{formatarMoeda(usado)} usado</span>
@@ -1762,6 +1783,7 @@ function PainelCartoes() {
                 {pct.toFixed(0)}% do limite utilizado{ciclo ? ` · fatura de ${new Date(ciclo.inicio + "T00:00:00").toLocaleDateString("pt-BR")} a ${new Date(ciclo.fim + "T00:00:00").toLocaleDateString("pt-BR")}` : " (defina o dia de fechamento para calcular a fatura real)"}
               </div>
               <Botao variante="fantasma" style={{ marginTop: 10, padding: "5px 8px", fontSize: 11.5 }} onClick={() => setFaturaAberta(c)}>Ver fatura detalhada</Botao>
+              </>)}
             </Cartao>
           );
         })}
@@ -1770,11 +1792,34 @@ function PainelCartoes() {
         <Modal titulo={editando ? "Editar cartão" : "Novo cartão"} onFechar={() => { setModalAberto(false); setEditando(null); }}>
           <form onSubmit={submeter} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <Campo label="Nome"><input type="text" placeholder="Ex.: Nubank, Santander..." value={novo.nome} onChange={(e) => setNovo({ ...novo, nome: e.target.value })} style={estiloInput(pal)} /></Campo>
-            <Campo label="Limite (R$)"><input type="text" inputMode="decimal" value={novo.limite} onChange={(e) => setNovo({ ...novo, limite: e.target.value })} className="num-tab" style={estiloInput(pal)} /></Campo>
-            <div style={{ display: "flex", gap: 10 }}>
-              <Campo label="Dia de fechamento"><input type="number" min="1" max="31" value={novo.fechamento} onChange={(e) => setNovo({ ...novo, fechamento: e.target.value })} style={estiloInput(pal)} /></Campo>
-              <Campo label="Dia de vencimento"><input type="number" min="1" max="31" value={novo.vencimento} onChange={(e) => setNovo({ ...novo, vencimento: e.target.value })} style={estiloInput(pal)} /></Campo>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[["credito", "Crédito"], ["debito", "Débito"]].map(([v, rotulo]) => (
+                <button key={v} type="button" onClick={() => setNovo({ ...novo, tipo: v })}
+                  style={{ flex: 1, padding: "8px", borderRadius: 8, border: `1px solid ${novo.tipo === v ? "transparent" : pal.borda}`, background: novo.tipo === v ? cor : "transparent", color: novo.tipo === v ? "#fff" : pal.texto, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>{rotulo}</button>
+              ))}
             </div>
+            {novo.tipo === "debito" ? (
+              <Campo label="Conta de onde o débito sai">
+                <select value={novo.contaId} onChange={(e) => setNovo({ ...novo, contaId: e.target.value })} style={estiloInput(pal)} required>
+                  <option value="">Escolha a conta</option>
+                  {contas.filter((c) => !c.arquivada || c.id === novo.contaId).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                </select>
+              </Campo>
+            ) : (
+              <>
+                <Campo label="Limite (R$)"><input type="text" inputMode="decimal" value={novo.limite} onChange={(e) => setNovo({ ...novo, limite: e.target.value })} className="num-tab" style={estiloInput(pal)} /></Campo>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <Campo label="Dia de fechamento"><input type="number" min="1" max="31" value={novo.fechamento} onChange={(e) => setNovo({ ...novo, fechamento: e.target.value })} style={estiloInput(pal)} /></Campo>
+                  <Campo label="Dia de vencimento"><input type="number" min="1" max="31" value={novo.vencimento} onChange={(e) => setNovo({ ...novo, vencimento: e.target.value })} style={estiloInput(pal)} /></Campo>
+                </div>
+                <Campo label="Conta que paga a fatura (opcional)">
+                  <select value={novo.contaId} onChange={(e) => setNovo({ ...novo, contaId: e.target.value })} style={estiloInput(pal)}>
+                    <option value="">Usar a conta escolhida em cada lançamento</option>
+                    {contas.filter((c) => !c.arquivada || c.id === novo.contaId).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                  </select>
+                </Campo>
+              </>
+            )}
             <Campo label="Cor"><input type="color" value={novo.cor} onChange={(e) => setNovo({ ...novo, cor: e.target.value })} style={{ width: 60, height: 32, border: "none", background: "none" }} /></Campo>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <Botao variante="fantasma" onClick={() => { setModalAberto(false); setEditando(null); }}>Cancelar</Botao>
