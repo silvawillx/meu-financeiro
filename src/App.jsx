@@ -499,7 +499,7 @@ function CardMetrica({ icone: Icone, label, valor, cor, sub }) {
 }
 
 function PainelDashboard() {
-  const { lancamentos, mesSelecionado, pal, cor, contas, categoriasDespesa, categoriasReceita, adicionarLancamento, setPagina, ultimoBackup, exportarBackupJSON } = useApp();
+  const { lancamentos, mesSelecionado, pal, cor, contas, categoriasDespesa, categoriasReceita, adicionarLancamento, setPagina, ultimoBackup, exportarBackupJSON, metas } = useApp();
   const [lembreteBackupOculto, setLembreteBackupOculto] = useState(false);
   const [modalRendaAberto, setModalRendaAberto] = useState(false);
   const doMes = useMemo(() => lancamentos.filter((l) => l.data.slice(0, 7) === mesSelecionado), [lancamentos, mesSelecionado]);
@@ -526,6 +526,15 @@ function PainelDashboard() {
     return Object.entries(mapa).sort((a, b) => b[1] - a[1]);
   }, [doMes]);
   const categoriaTopo = porCategoria[0];
+  // Orçamento: usa as metas por categoria já cadastradas em "Metas"
+  const statusOrcamento = Object.entries(metas || {})
+    .filter(([, limite]) => limite > 0)
+    .map(([cat, limite]) => {
+      const gasto = porCategoria.find(([c]) => c === cat)?.[1] || 0;
+      return { cat, limite, gasto, pct: (gasto / limite) * 100 };
+    })
+    .sort((a, b) => b.pct - a.pct)
+    .slice(0, 5);
 
   const timeline = useMemo(() => [...lancamentos].sort((a, b) => (a.data < b.data ? 1 : -1)).slice(0, 8), [lancamentos]);
 
@@ -602,6 +611,26 @@ function PainelDashboard() {
           <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${pal.borda}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6, fontSize: 12.5, color: pal.textoSuave }}>
             <span>Do trabalho: <strong className="num-tab" style={{ color: pal.texto }}>{formatarMoeda(receitaTrabalho)}</strong></span>
             <span>Fora do trabalho: <strong className="num-tab" style={{ color: pal.texto }}>{formatarMoeda(receitaFora)}</strong></span>
+          </div>
+        </Cartao>
+      )}
+
+      {statusOrcamento.length > 0 && (
+        <Cartao style={{ padding: 16, marginBottom: 20, cursor: "pointer" }}>
+          <div onClick={() => setPagina("metas")}>
+            <div style={{ fontSize: 12, color: pal.textoSuave, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 10 }}>Orçamento do mês</div>
+            {statusOrcamento.map((m) => {
+              const cor100 = m.pct >= 100 ? VERMELHO : m.pct >= 80 ? "#C98A3A" : VERDE;
+              return (
+                <div key={m.cat} style={{ marginBottom: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 4, gap: 8 }}>
+                    <span style={{ color: pal.texto }}>{m.cat}{m.pct >= 100 ? " — passou do limite" : m.pct >= 80 ? " — perto do limite" : ""}</span>
+                    <span className="num-tab" style={{ color: pal.textoSuave, whiteSpace: "nowrap" }}>{formatarMoeda(m.gasto)} / {formatarMoeda(m.limite)}</span>
+                  </div>
+                  <Progresso valor={m.gasto} max={m.limite} corBase={cor100} />
+                </div>
+              );
+            })}
           </div>
         </Cartao>
       )}
@@ -3437,7 +3466,16 @@ export default function App() {
       }], setRecorrentesState);
     }
     setMesSelecionado(f.data.slice(0, 7));
-    mostrarToast(recId ? "Lançamento criado e programado para todo mês" : "Lançamento adicionado");
+    let aviso = "";
+    const limiteCat = f.tipo === "despesa" ? metas[f.categoria] : 0;
+    if (limiteCat > 0) {
+      const mes = f.data.slice(0, 7);
+      const antes = lancamentos.filter((l) => l.tipo === "despesa" && l.categoria === f.categoria && l.data.slice(0, 7) === mes).reduce((s, l) => s + l.valor, 0);
+      const antesPct = (antes / limiteCat) * 100, depoisPct = ((antes + valorNum) / limiteCat) * 100;
+      if (antesPct < 100 && depoisPct >= 100) aviso = ` ⚠ ${f.categoria} passou do limite do mês (${formatarMoeda(limiteCat)})`;
+      else if (antesPct < 80 && depoisPct >= 80) aviso = ` ⚠ ${f.categoria}: já usou ${depoisPct.toFixed(0)}% do limite`;
+    }
+    mostrarToast((recId ? "Lançamento criado e programado para todo mês" : "Lançamento adicionado") + aviso, null, aviso ? 5000 : undefined);
   };
 
   const adicionarViagem = (dados) => salvar("viagens", [...viagens, { ...dados, id: genId("viagem") }], setViagensState);
