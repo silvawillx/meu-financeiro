@@ -39,6 +39,9 @@ const ORIGENS_RECEITA = [
 ];
 // Lançamentos de "Ajuste de saldo" (conferência de conta) corrigem o saldo, mas não são renda nem gasto.
 const ehAjusteSaldo = (l) => /ajuste de saldo|concilia/i.test(`${l.categoria || ""} ${l.descricao || ""}`);
+// "Aconteceu": já tem data de hoje ou antes e não está marcado como "A pagar".
+// O saldo da conta só considera o que já aconteceu; salários e parcelas futuras ficam no "previsto".
+const aconteceu = (l) => l.data <= hojeISO() && l.status !== "A pagar";
 // Receitas antigas não têm "origem": deduz pela categoria.
 const origemDe = (l) => {
   if (l.origem) return l.origem;
@@ -69,7 +72,9 @@ const MESES_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "j
 const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 const DIAS_SEMANA = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
 
-const hojeISO = () => new Date().toISOString().slice(0, 10);
+// Data local (não UTC): no Brasil, depois das 21h o UTC já é "amanhã".
+const dataLocalISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const hojeISO = () => dataLocalISO(new Date());
 const mesAtual = () => hojeISO().slice(0, 7);
 const genId = (prefixo = "id") => `${prefixo}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
@@ -91,7 +96,7 @@ const addMeses = (dataISO, n) => {
   const d = new Date(ano, mes - 1 + n, 1);
   const ultimoDiaDoMesDestino = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
   d.setDate(Math.min(dia, ultimoDiaDoMesDestino));
-  return d.toISOString().slice(0, 10);
+  return dataLocalISO(d);
 };
 
 // Calcula o período real da fatura (dia após o fechamento anterior até o dia de fechamento),
@@ -269,7 +274,7 @@ function parseEntradaRapida(textoOriginal) {
   const valor = matchValor ? parseValorStr(matchValor[1]) : null;
   let data = hojeISO();
   if (low.includes("ontem")) {
-    const d = new Date(); d.setDate(d.getDate() - 1); data = d.toISOString().slice(0, 10);
+    const d = new Date(); d.setDate(d.getDate() - 1); data = dataLocalISO(d);
   }
   let contaSugerida = null;
   if (low.includes("pix")) contaSugerida = "PIX";
@@ -1566,8 +1571,8 @@ function PainelContas() {
   const [transferenciaAberta, setTransferenciaAberta] = useState(false);
   const [conferenciaAberta, setConferenciaAberta] = useState(null);
 
-  const saldoConta = (contaId, saldoInicial) => {
-    const dela = lancamentos.filter((l) => l.contaId === contaId);
+  const saldoConta = (contaId, saldoInicial, incluirFuturos = false) => {
+    const dela = lancamentos.filter((l) => l.contaId === contaId && (incluirFuturos || aconteceu(l)));
     const receitas = dela.filter((l) => l.tipo === "receita").reduce((s, l) => s + l.valor, 0);
     const despesas = dela.filter((l) => l.tipo === "despesa").reduce((s, l) => s + l.valor, 0);
     const transfSaida = dela.filter((l) => l.tipo === "transferencia" && l.direcao === "saida").reduce((s, l) => s + l.valor, 0);
@@ -1631,6 +1636,9 @@ function PainelContas() {
               <div className="num-tab" style={{ fontSize: 19, fontWeight: 600, color: saldo >= 0 ? VERDE : VERMELHO }}>
                 {formatarMoeda(saldo)}
               </div>
+              {Math.abs(saldoConta(c.id, c.saldoInicial, true) - saldo) >= 0.01 && (
+                <div style={{ fontSize: 11, color: pal.textoSuave, marginTop: 2 }}>Previsto com o que ainda vem: <span className="num-tab">{formatarMoeda(saldoConta(c.id, c.saldoInicial, true))}</span></div>
+              )}
               {saldoBaixo && <div style={{ fontSize: 11, color: VERMELHO, marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} /> abaixo do mínimo ({formatarMoeda(c.saldoMinimo)})</div>}
               <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
                 <Botao variante="fantasma" style={{ padding: "5px 8px", fontSize: 11.5 }} onClick={() => setExtratoAberto(c)}>Ver extrato</Botao>
@@ -1690,7 +1698,7 @@ function PainelContas() {
 function ExtratoConta({ conta, onFechar }) {
   const { lancamentos, pal } = useApp();
   const movimentos = useMemo(() => {
-    const dela = lancamentos.filter((l) => l.contaId === conta.id).sort((a, b) => (a.data < b.data ? -1 : 1));
+    const dela = lancamentos.filter((l) => l.contaId === conta.id && aconteceu(l)).sort((a, b) => (a.data < b.data ? -1 : 1));
     let saldo = conta.saldoInicial || 0;
     return dela.map((l) => {
       const entrada = l.tipo === "receita" || (l.tipo === "transferencia" && l.direcao === "entrada");
@@ -3867,7 +3875,7 @@ export default function App() {
       if (ultimaNotif === hojeISO()) return;
       const hj = hojeISO();
       const emTresDias = new Date(); emTresDias.setDate(emTresDias.getDate() + 3);
-      const emTresDiasStr = emTresDias.toISOString().slice(0, 10);
+      const emTresDiasStr = dataLocalISO(emTresDias);
       const proximos = lancamentos.filter((l) => l.tipo === "despesa" && l.status === "A pagar" && l.data >= hj && l.data <= emTresDiasStr);
       if (proximos.length > 0) {
         const total = proximos.reduce((s, l) => s + l.valor, 0);
