@@ -10,289 +10,18 @@ import {
   AlertTriangle, ArrowUp, ArrowDown, Menu, RefreshCw, Copy, Banknote, Bell, Printer, Plane, TrendingUp,
 } from "lucide-react";
 
+import { MESES_PT, MESES_ABREV, DIAS_SEMANA, dataLocalISO, hojeISO, mesAtual, mesLabel, mesLabelCompleto, diasNoMes, addMeses, cicloFatura, mesesEntre } from "./lib/datas.js";
+import { genId, formatarMoeda } from "./lib/formato.js";
+import { CATEGORIAS_DESPESA_PADRAO, CATEGORIAS_RECEITA_PADRAO, todasCategorias, corCategoria, rotuloStatus } from "./lib/categorias.js";
+import { ORIGENS_RECEITA, ehAjusteSaldo, aconteceu, origemDe, saldoConta as calcularSaldoConta } from "./lib/lancamentos.js";
+import { gerarRecorrentes } from "./lib/recorrentes.js";
+import { gerarParcelas } from "./lib/parcelas.js";
+import { TIPOS_INVEST, calcularAtivo, buscarCDI, buscarCotacao } from "./lib/investimentos.js";
+import { parseCSVTexto, parseCSVComCabecalho, parseOFXTexto, parseEntradaRapida } from "./lib/importacao.js";
+
 /* ============================================================
    1. CONSTANTES E HELPERS
    ============================================================ */
-
-const CATEGORIAS_DESPESA_PADRAO = [
-  { nome: "Alimentação", cor: "#B4552F" },
-  { nome: "Transporte", cor: "#3E6F5C" },
-  { nome: "Moradia", cor: "#1B2A4A" },
-  { nome: "Saúde", cor: "#8A3E5C" },
-  { nome: "Lazer", cor: "#C98A3A" },
-  { nome: "Educação", cor: "#2F5D8A" },
-  { nome: "Compras", cor: "#6B4E9C" },
-  { nome: "Dívidas/Cartão", cor: "#8A5A2F" },
-  { nome: "Outros", cor: "#6B6459" },
-];
-const CATEGORIAS_RECEITA_PADRAO = [
-  { nome: "Salário", cor: "#3E6F5C" },
-  { nome: "Freelance", cor: "#2F5D8A" },
-  { nome: "Outros", cor: "#6B6459" },
-];
-// Origem da receita: separa o que vem do trabalho do que vem "por fora".
-const ORIGENS_RECEITA = [
-  { id: "salario", nome: "Salário", cor: "#3E6F5C", trabalho: true },
-  { id: "extra", nome: "Renda extra", cor: "#2F5D8A", trabalho: false },
-  { id: "rendimentos", nome: "Rendimentos", cor: "#C98A3A", trabalho: false },
-  { id: "outras", nome: "Outras", cor: "#6B6459", trabalho: false },
-];
-// Lançamentos de "Ajuste de saldo" (conferência de conta) corrigem o saldo, mas não são renda nem gasto.
-const ehAjusteSaldo = (l) => /ajuste de saldo|concilia/i.test(`${l.categoria || ""} ${l.descricao || ""}`);
-// "Aconteceu": já tem data de hoje ou antes e não está marcado como "A pagar".
-// O saldo da conta só considera o que já aconteceu; salários e parcelas futuras ficam no "previsto".
-const aconteceu = (l) => l.data <= hojeISO() && l.status !== "A pagar";
-// Receitas antigas não têm "origem": deduz pela categoria.
-const origemDe = (l) => {
-  if (l.origem) return l.origem;
-  const c = (l.categoria || "").toLowerCase();
-  if (c.includes("ajuste") || c.includes("concilia")) return "ajuste"; // correção de saldo: não é renda
-  if (c.includes("salario") || c.includes("salário") || c.includes("holerite")) return "salario";
-  if (c.includes("free") || c.includes("extra") || c.includes("bico")) return "extra";
-  if (c.includes("rendiment") || c.includes("dividend") || c.includes("juros")) return "rendimentos";
-  return "outras";
-};
-
-const todasCategorias = (tipo, categoriasDespesa, categoriasReceita) => (tipo === "receita" ? categoriasReceita : categoriasDespesa);
-const corCategoria = (nome, categorias) => {
-  const c = (categorias || []).find((c) => c.nome === nome);
-  return c ? c.cor : "#6B6459";
-};
-
-// O valor guardado do status continua sendo "Pago"/"A pagar" (não muda o dado nem os filtros),
-// só o texto mostrado na tela muda quando é receita, pra fazer mais sentido: "Recebido"/"A receber".
-const rotuloStatus = (status, tipo) => {
-  if (tipo !== "receita") return status;
-  if (status === "Pago") return "Recebido";
-  if (status === "A pagar") return "A receber";
-  return status;
-};
-
-const MESES_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
-const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-const DIAS_SEMANA = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
-
-// Data local (não UTC): no Brasil, depois das 21h o UTC já é "amanhã".
-const dataLocalISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-const hojeISO = () => dataLocalISO(new Date());
-const mesAtual = () => hojeISO().slice(0, 7);
-const genId = (prefixo = "id") => `${prefixo}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-
-const formatarMoeda = (v) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
-const mesLabel = (chave) => {
-  const [ano, mes] = chave.split("-");
-  return `${MESES_ABREV[parseInt(mes, 10) - 1]}/${ano.slice(2)}`;
-};
-const mesLabelCompleto = (chave) => {
-  const [ano, mes] = chave.split("-");
-  return `${MESES_PT[parseInt(mes, 10) - 1]} de ${ano}`;
-};
-const diasNoMes = (chave) => {
-  const [ano, mes] = chave.split("-").map(Number);
-  return new Date(ano, mes, 0).getDate();
-};
-const addMeses = (dataISO, n) => {
-  const [ano, mes, dia] = dataISO.split("-").map(Number);
-  const d = new Date(ano, mes - 1 + n, 1);
-  const ultimoDiaDoMesDestino = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-  d.setDate(Math.min(dia, ultimoDiaDoMesDestino));
-  return dataLocalISO(d);
-};
-
-// Calcula o período real da fatura (dia após o fechamento anterior até o dia de fechamento),
-// referenciado ao mês em que a fatura fecha. Se o cartão não tiver dia de fechamento
-// cadastrado, retorna null (quem chamar deve usar o mês calendário como alternativa).
-function cicloFatura(cartao, mesReferencia) {
-  const fech = parseInt(cartao?.fechamento, 10);
-  if (!fech || fech < 1 || fech > 31) return null;
-  const fimDia = Math.min(fech, diasNoMes(mesReferencia));
-  const fim = `${mesReferencia}-${String(fimDia).padStart(2, "0")}`;
-  const mesAnterior = addMeses(`${mesReferencia}-01`, -1).slice(0, 7);
-  const inicioDia = Math.min(fech + 1, diasNoMes(mesAnterior));
-  const inicio = `${mesAnterior}-${String(inicioDia).padStart(2, "0")}`;
-  return { inicio, fim };
-}
-
-// Lista os meses entre (exclusive) e fim (inclusive) — usado pra gerar
-// recorrentes que ficaram pendentes enquanto o app ficou fechado.
-function mesesEntre(mesInicioExclusivo, mesFimInclusivo, limite = 24) {
-  const meses = [];
-  let atual = addMeses(`${mesInicioExclusivo}-01`, 1).slice(0, 7);
-  let contador = 0;
-  while (atual <= mesFimInclusivo && contador < limite) {
-    meses.push(atual);
-    atual = addMeses(`${atual}-01`, 1).slice(0, 7);
-    contador++;
-  }
-  return meses;
-}
-
-function parseValorStr(s) {
-  if (s === null || s === undefined || s === "") return null;
-  let t = String(s).trim().replace("R$", "").trim();
-  t = t.replace(/\./g, "").replace(",", ".");
-  const v = parseFloat(t);
-  return isNaN(v) ? null : v;
-}
-
-function detectarMesTexto(texto) {
-  const low = (texto || "").toLowerCase();
-  for (let i = 0; i < MESES_PT.length; i++) if (low.includes(MESES_PT[i])) return i + 1;
-  return null;
-}
-
-// Parser da planilha original do usuário (; DESPESA ; QUANTIA ; NOME ; ANOTAÇÕES)
-function parseCSVTexto(texto) {
-  const linhas = texto.split(/\r?\n/).map((l) => l.split(";"));
-  let headerIdx = -1;
-  for (let i = 0; i < linhas.length; i++) {
-    if (linhas[i][1] && linhas[i][1].trim().toUpperCase() === "DESPESA") { headerIdx = i; break; }
-  }
-  const mes = linhas[0] ? detectarMesTexto(linhas[0][1]) : null;
-  const itens = [];
-  let salario = null;
-  if (headerIdx >= 0) {
-    for (let i = headerIdx + 1; i < linhas.length; i++) {
-      const row = linhas[i];
-      if (!row || row.length < 3) continue;
-      const despesa = (row[1] || "").trim();
-      const quantiaStr = (row[2] || "").trim();
-      const nome = (row[3] || "").trim();
-      const anota = (row[4] || "").trim();
-      const despesaLow = despesa.toLowerCase();
-      if (despesaLow === "total") continue;
-      if (despesaLow === "salario" || despesaLow === "salário") { salario = parseValorStr(quantiaStr); continue; }
-      if (despesaLow === "sobrou") continue;
-      if (!despesa && !quantiaStr) continue;
-      const valor = parseValorStr(quantiaStr);
-      if (valor === null) continue;
-      const anotaLow = anota.toLowerCase();
-      let status = "-";
-      if (anotaLow.includes("a pagar")) status = "A pagar";
-      else if (anotaLow.includes("pago")) status = "Pago";
-      itens.push({ descricao: despesa, valor, pessoa: nome, observacoes: anota, status, categoria: "Outros", incluir: true });
-    }
-  }
-  return { mes, itens, salario };
-}
-
-// Parser de CSV "com cabeçalho": Data;Tipo;Categoria;Descrição;Pessoa;Status;Conta;Escopo;Valor
-// (o mesmo que o app exporta). Aceita ; ou , como separador, data dd/mm/aaaa ou aaaa-mm-dd
-// e, sem coluna Tipo, usa o sinal do valor (negativo = despesa).
-function dividirLinhaCSV(linha, sep) {
-  const out = []; let atual = ""; let aspas = false;
-  for (let i = 0; i < linha.length; i++) {
-    const c = linha[i];
-    if (c === '"') { if (aspas && linha[i + 1] === '"') { atual += '"'; i++; } else aspas = !aspas; }
-    else if (c === sep && !aspas) { out.push(atual); atual = ""; }
-    else atual += c;
-  }
-  out.push(atual);
-  return out.map((x) => x.trim());
-}
-function normalizarCabecalho(h) {
-  return h.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z]/g, "");
-}
-function normalizarDataCSV(d) {
-  const t = (d || "").trim();
-  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-  return null;
-}
-function parseCSVComCabecalho(texto) {
-  const linhas = texto.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim());
-  if (linhas.length === 0) return null;
-  const sep = (linhas[0].match(/;/g) || []).length >= (linhas[0].match(/,/g) || []).length ? ";" : ",";
-  const cab = dividirLinhaCSV(linhas[0], sep).map(normalizarCabecalho);
-  const idx = (...nomes) => cab.findIndex((c) => nomes.includes(c));
-  const iData = idx("data"), iValor = idx("valor", "quantia"), iDesc = idx("descricao", "historico", "nome");
-  if (iData < 0 || iValor < 0 || iDesc < 0) return null; // não é esse formato
-  const iTipo = idx("tipo"), iCat = idx("categoria"), iPessoa = idx("pessoa"), iStatus = idx("status"), iConta = idx("conta"), iEscopo = idx("escopo");
-  const itens = []; let ignoradas = 0;
-  linhas.slice(1).forEach((linha) => {
-    const c = dividirLinhaCSV(linha, sep);
-    const data = normalizarDataCSV(c[iData]);
-    const bruto = parseValorStr(c[iValor]);
-    if (!data || bruto === null || bruto === 0) { ignoradas++; return; }
-    const tipoCol = iTipo >= 0 ? (c[iTipo] || "").toLowerCase() : "";
-    const tipo = tipoCol.startsWith("rec") ? "receita" : tipoCol.startsWith("des") ? "despesa" : bruto < 0 ? "despesa" : "receita";
-    if (tipoCol.startsWith("transf")) { ignoradas++; return; } // transferências entre contas ficam de fora
-    const statusTxt = iStatus >= 0 ? (c[iStatus] || "") : "";
-    const status = /a pagar|a receber/i.test(statusTxt) ? "A pagar" : /pago|recebido/i.test(statusTxt) ? "Pago" : "-";
-    itens.push({
-      data, tipo, valor: Math.abs(bruto), descricao: c[iDesc] || "Sem descrição", categoria: iCat >= 0 ? c[iCat] : "",
-      pessoa: iPessoa >= 0 ? c[iPessoa] : "", status, contaNome: iConta >= 0 ? c[iConta] : "",
-      escopo: iEscopo >= 0 && /neg/i.test(c[iEscopo]) ? "negocio" : "pessoal", observacoes: "", incluir: true,
-    });
-  });
-  return { itens, ignoradas };
-}
-
-// Parser de extrato bancário no formato OFX (exportado por bancos como Nubank, Inter, Santander etc.)
-function parseOFXTexto(texto) {
-  const itens = [];
-  const blocos = texto.split(/<STMTTRN>/i).slice(1);
-  blocos.forEach((bloco) => {
-    const fim = bloco.search(/<\/STMTTRN>/i);
-    const trecho = fim >= 0 ? bloco.slice(0, fim) : bloco;
-    const pegar = (tag) => {
-      const m = trecho.match(new RegExp(`<${tag}>([^<\\r\\n]*)`, "i"));
-      return m ? m[1].trim() : "";
-    };
-    const dtStr = pegar("DTPOSTED");
-    const valorStr = pegar("TRNAMT");
-    const memo = pegar("MEMO") || pegar("NAME") || "Transação bancária";
-    if (!dtStr || dtStr.length < 8 || !valorStr) return;
-    const data = `${dtStr.slice(0, 4)}-${dtStr.slice(4, 6)}-${dtStr.slice(6, 8)}`;
-    const valorNum = parseFloat(valorStr.replace(",", "."));
-    if (isNaN(valorNum) || valorNum === 0) return;
-    itens.push({
-      descricao: memo, valor: Math.abs(valorNum), tipo: valorNum < 0 ? "despesa" : "receita",
-      pessoa: "", observacoes: "", status: "Pago", categoria: "Outros", data, incluir: true,
-    });
-  });
-  return itens;
-}
-
-// "IA local" por regras — entrada rápida tipo "mercado 120 hoje" / "uber 32 ontem" / "pix farmacia 45"
-const DICIONARIO_CATEGORIA = {
-  mercado: "Alimentação", supermercado: "Alimentação", almoço: "Alimentação", almoco: "Alimentação",
-  janta: "Alimentação", lanche: "Alimentação", ifood: "Alimentação", restaurante: "Alimentação",
-  uber: "Transporte", "99": "Transporte", gasolina: "Transporte", combustivel: "Transporte", combustível: "Transporte", onibus: "Transporte", ônibus: "Transporte",
-  aluguel: "Moradia", internet: "Moradia", energia: "Moradia", luz: "Moradia", agua: "Moradia", água: "Moradia", condominio: "Moradia", condomínio: "Moradia",
-  farmacia: "Saúde", farmácia: "Saúde", remedio: "Saúde", remédio: "Saúde", academia: "Saúde", medico: "Saúde", médico: "Saúde",
-  cinema: "Lazer", bar: "Lazer", show: "Lazer", viagem: "Lazer", streaming: "Lazer",
-  curso: "Educação", livro: "Educação", faculdade: "Educação",
-  roupa: "Compras", loja: "Compras",
-};
-function parseEntradaRapida(textoOriginal) {
-  const texto = textoOriginal.trim();
-  const low = texto.toLowerCase();
-  const matchValor = texto.match(/(\d+[.,]?\d*)/);
-  const valor = matchValor ? parseValorStr(matchValor[1]) : null;
-  let data = hojeISO();
-  if (low.includes("ontem")) {
-    const d = new Date(); d.setDate(d.getDate() - 1); data = dataLocalISO(d);
-  }
-  let contaSugerida = null;
-  if (low.includes("pix")) contaSugerida = "PIX";
-  else if (low.includes("cartão") || low.includes("cartao")) contaSugerida = "Cartão";
-  else if (low.includes("dinheiro")) contaSugerida = "Dinheiro";
-  let categoria = "Outros";
-  for (const chave in DICIONARIO_CATEGORIA) {
-    if (low.includes(chave)) { categoria = DICIONARIO_CATEGORIA[chave]; break; }
-  }
-  let descricao = texto
-    .replace(/(\d+[.,]?\d*)/, "")
-    .replace(/\b(hoje|ontem|pix|cart[aã]o|dinheiro|r\$)\b/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!descricao) descricao = texto;
-  descricao = descricao.charAt(0).toUpperCase() + descricao.slice(1);
-  return { valor, data, categoria, contaSugerida, descricao };
-}
 
 /* ============================================================
    2. TEMA
@@ -1556,14 +1285,7 @@ function PainelContas() {
   const [transferenciaAberta, setTransferenciaAberta] = useState(false);
   const [conferenciaAberta, setConferenciaAberta] = useState(null);
 
-  const saldoConta = (contaId, saldoInicial, incluirFuturos = false) => {
-    const dela = lancamentos.filter((l) => l.contaId === contaId && (incluirFuturos || aconteceu(l)));
-    const receitas = dela.filter((l) => l.tipo === "receita").reduce((s, l) => s + l.valor, 0);
-    const despesas = dela.filter((l) => l.tipo === "despesa").reduce((s, l) => s + l.valor, 0);
-    const transfSaida = dela.filter((l) => l.tipo === "transferencia" && l.direcao === "saida").reduce((s, l) => s + l.valor, 0);
-    const transfEntrada = dela.filter((l) => l.tipo === "transferencia" && l.direcao === "entrada").reduce((s, l) => s + l.valor, 0);
-    return (saldoInicial || 0) + receitas - despesas - transfSaida + transfEntrada;
-  };
+  const saldoConta = (contaId, saldoInicial, incluirFuturos = false) => calcularSaldoConta(lancamentos, { id: contaId, saldoInicial }, { incluirFuturos });
 
   const qtdLancamentosVinculados = (contaId) => lancamentos.filter((l) => l.contaId === contaId).length;
 
@@ -2049,54 +1771,6 @@ function FaturaCartao({ cartao, onFechar }) {
 /* ============================================================
    12a. INVESTIMENTOS
    ============================================================ */
-const TIPOS_INVEST = [
-  { id: "acao", nome: "Ação / FII", cor: "#2F5D8A" },
-  { id: "cdb", nome: "CDB / renda fixa", cor: "#3E6F5C" },
-  { id: "cdi", nome: "Conta/caixinha (CDI)", cor: "#C98A3A" },
-  { id: "outro", nome: "Outro", cor: "#6B6459" },
-];
-
-// CDI anualizado (% a.a.) — série 4389 do Banco Central.
-async function buscarCDI() {
-  const r = await fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.4389/dados/ultimos/1?formato=json");
-  if (!r.ok) throw new Error("CDI");
-  const j = await r.json();
-  const v = parseFloat(j?.[0]?.valor);
-  if (!v) throw new Error("CDI");
-  return v;
-}
-// Cotação de ação/FII pela brapi.dev (token opcional; alguns papéis exigem).
-async function buscarCotacao(ticker, token) {
-  const url = `https://brapi.dev/api/quote/${encodeURIComponent(ticker)}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(ticker);
-  const j = await r.json();
-  const p = j?.results?.[0]?.regularMarketPrice;
-  if (!p) throw new Error(ticker);
-  return p;
-}
-
-const diasDesde = (iso) => Math.max(0, Math.round((new Date(hojeISO() + "T00:00:00") - new Date(iso + "T00:00:00")) / 86400000));
-
-// Calcula quanto foi investido e quanto vale hoje (estimativa bruta, sem IR/IOF).
-function calcularAtivo(a, mercado) {
-  if (a.tipo === "acao") {
-    const cot = mercado?.cotacoes?.[(a.ticker || "").toUpperCase()];
-    const preco = cot?.preco ?? a.precoMedio ?? 0;
-    return { investido: (a.quantidade || 0) * (a.precoMedio || 0), atual: (a.quantidade || 0) * preco, preco, semCotacao: !cot };
-  }
-  const movs = a.movimentos || [];
-  const investido = movs.reduce((s, m) => s + (m.tipo === "aporte" ? m.valor : -m.valor), 0);
-  if (a.valorAtualManual !== undefined && a.valorAtualManual !== null && a.valorAtualManual !== "") {
-    return { investido, atual: Number(a.valorAtualManual), manual: true };
-  }
-  const cdi = mercado?.cdiAnual;
-  if (a.tipo === "outro" || !cdi) return { investido, atual: investido, semCDI: a.tipo !== "outro" };
-  const taxa = (cdi / 100) * ((a.percCDI || 100) / 100);
-  const atual = movs.reduce((s, m) => s + (m.tipo === "aporte" ? 1 : -1) * m.valor * Math.pow(1 + taxa, diasDesde(m.data) / 365), 0);
-  return { investido, atual, estimado: true };
-}
-
 function PainelInvestimentos() {
   const { investimentos, mercado, cartoes, contas, adicionarInvestimento, editarInvestimento, excluirInvestimento, movimentarInvestimento, atualizarMercado, adicionarLancamento, pal, cor, mostrarToast } = useApp();
   const [modal, setModal] = useState(null); // {ativo|null}
@@ -3787,27 +3461,10 @@ export default function App() {
 
       // geração automática de recorrentes — cobre também meses pendentes,
       // caso você tenha ficado um tempo sem abrir o app
-      const mAtual = mesAtual();
-      let lancFinal = lanc;
-      const recAtualizados = rec.map((r) => {
-        if (r.ultimoMesGerado === mAtual) return r;
-        const mesesParaGerar = r.ultimoMesGerado ? mesesEntre(r.ultimoMesGerado, mAtual) : [mAtual];
-        // pausada: não gera nada (e não acumula meses para depois); com data final, para nela
-        const jaExiste = (m) => lancFinal.some((l) => l.recorrenteId === r.id && l.data.slice(0, 7) === m);
-        const mesesAtivos = r.pausada ? [] : mesesParaGerar.filter((m) =>
-          (!r.dataFim || m <= r.dataFim) && (!r.inicioMes || m >= r.inicioMes) && !(r.mesesIgnorados || []).includes(m) && !jaExiste(m));
-        mesesAtivos.forEach((m) => {
-          const dia = String(Math.min(r.diaDoMes, diasNoMes(m))).padStart(2, "0");
-          lancFinal = [{
-            id: genId("rec"), data: `${m}-${dia}`, tipo: r.tipo || "despesa", categoria: r.categoria, descricao: r.descricao,
-            pessoa: "", status: "-", contaId: r.contaId, cartaoId: r.cartaoId || null, valor: r.valor, escopo: "pessoal",
-            observacoes: "Gerado automaticamente (recorrente)", anexo: null, parcelaInfo: null, recorrenteId: r.id,
-            ...(r.tipo === "receita" ? { origem: r.origem || "salario" } : {}),
-          }, ...lancFinal];
-        });
-        return { ...r, ultimoMesGerado: mAtual };
-      });
-      if (recAtualizados.some((r, i) => r.ultimoMesGerado !== rec[i]?.ultimoMesGerado)) {
+      const gerado = gerarRecorrentes({ recorrentes: rec, lancamentos: lanc, mesAlvo: mesAtual() });
+      const lancFinal = gerado.lancamentos;
+      const recAtualizados = gerado.recorrentes;
+      if (gerado.alterou) {
         await window.storage.set("lancamentos", JSON.stringify(lancFinal), false);
         await window.storage.set("recorrentes", JSON.stringify(recAtualizados), false);
       }
@@ -3881,20 +3538,7 @@ export default function App() {
 
   const adicionarLancamento = (f, valorNum) => {
     if (f.parcelado && f.valorTotalParcelamento && f.qtdParcelas) {
-      const total = parseFloat(String(f.valorTotalParcelamento).replace(",", "."));
-      const qtd = parseInt(f.qtdParcelas, 10);
-      const atualInicio = parseInt(f.parcelaAtual || "1", 10);
-      const valorParcela = Math.round((total / qtd) * 100) / 100;
-      const grupo = genId("parc");
-      const novos = [];
-      for (let n = atualInicio; n <= qtd; n++) {
-        novos.push({
-          id: genId("l"), data: addMeses(f.data, n - atualInicio), tipo: "despesa", categoria: f.categoria,
-          descricao: f.descricao.trim(), pessoa: f.pessoa.trim(), status: n === atualInicio ? f.status : "A pagar",
-          contaId: f.contaId, cartaoId: f.cartaoId || null, valor: valorParcela, observacoes: f.observacoes,
-          anexo: f.anexo, escopo: f.escopo || "pessoal", emprestimo: !!f.emprestimo, viagemId: f.viagemId || null, parcelaInfo: { atual: n, total: qtd, grupo }, recorrenteId: null,
-        });
-      }
+      const novos = gerarParcelas(f);
       salvar("lancamentos", [...novos, ...lancamentos], setLancamentosState);
       setMesSelecionado(f.data.slice(0, 7));
       mostrarToast(`${novos.length} parcelas criadas`);
