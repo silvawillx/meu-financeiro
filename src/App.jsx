@@ -37,11 +37,14 @@ const ORIGENS_RECEITA = [
   { id: "rendimentos", nome: "Rendimentos", cor: "#C98A3A", trabalho: false },
   { id: "outras", nome: "Outras", cor: "#6B6459", trabalho: false },
 ];
+// Lançamentos de "Ajuste de saldo" (conferência de conta) corrigem o saldo, mas não são renda nem gasto.
+const ehAjusteSaldo = (l) => /ajuste de saldo|concilia/i.test(`${l.categoria || ""} ${l.descricao || ""}`);
 // Receitas antigas não têm "origem": deduz pela categoria.
 const origemDe = (l) => {
   if (l.origem) return l.origem;
   const c = (l.categoria || "").toLowerCase();
-  if (c.includes("sal")) return "salario";
+  if (c.includes("ajuste") || c.includes("concilia")) return "ajuste"; // correção de saldo: não é renda
+  if (c.includes("salario") || c.includes("salário") || c.includes("holerite")) return "salario";
   if (c.includes("free") || c.includes("extra") || c.includes("bico")) return "extra";
   if (c.includes("rendiment") || c.includes("dividend") || c.includes("juros")) return "rendimentos";
   return "outras";
@@ -385,7 +388,7 @@ function Modal({ titulo, onFechar, children, largura = 480 }) {
   );
 }
 
-function Confirmacao({ msg, onCancelar, onConfirmar }) {
+function Confirmacao({ msg, onCancelar, onConfirmar, rotuloConfirmar = "Excluir" }) {
   const { pal } = useApp();
   return (
     <Modal titulo="Confirmar" onFechar={onCancelar} largura={360}>
@@ -395,7 +398,7 @@ function Confirmacao({ msg, onCancelar, onConfirmar }) {
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
         <Botao variante="fantasma" onClick={onCancelar}>Cancelar</Botao>
-        <Botao variante="perigo" onClick={onConfirmar}>Excluir</Botao>
+        <Botao variante="perigo" onClick={onConfirmar}>{rotuloConfirmar}</Botao>
       </div>
     </Modal>
   );
@@ -559,15 +562,17 @@ function PainelDashboard() {
   const [modalRendaAberto, setModalRendaAberto] = useState(false);
   const doMes = useMemo(() => lancamentos.filter((l) => l.data.slice(0, 7) === mesSelecionado), [lancamentos, mesSelecionado]);
   const receitasDoMes = useMemo(() => doMes.filter((l) => l.tipo === "receita").sort((a, b) => (a.data < b.data ? 1 : -1)), [doMes]);
-  const receita = doMes.filter((l) => l.tipo === "receita").reduce((s, l) => s + l.valor, 0);
-  const gasto = doMes.filter((l) => l.tipo === "despesa").reduce((s, l) => s + l.valor, 0);
+  const doMesOp = useMemo(() => doMes.filter((l) => !ehAjusteSaldo(l)), [doMes]); // sem ajustes de saldo
+  const receita = doMesOp.filter((l) => l.tipo === "receita").reduce((s, l) => s + l.valor, 0);
+  const gasto = doMesOp.filter((l) => l.tipo === "despesa").reduce((s, l) => s + l.valor, 0);
   const saldo = receita - gasto;
   const economiaPct = receita > 0 ? (saldo / receita) * 100 : 0;
   const porOrigem = ORIGENS_RECEITA.map((o) => ({
-    ...o, valor: doMes.filter((l) => l.tipo === "receita" && origemDe(l) === o.id).reduce((s, l) => s + l.valor, 0),
+    ...o, valor: doMesOp.filter((l) => l.tipo === "receita" && origemDe(l) === o.id).reduce((s, l) => s + l.valor, 0),
   }));
   const receitaTrabalho = porOrigem.filter((o) => o.trabalho).reduce((s, o) => s + o.valor, 0);
-  const receitaFora = receita - receitaTrabalho;
+  const receitaClassificada = porOrigem.reduce((s, o) => s + o.valor, 0); // sem os "ajustes de saldo"
+  const receitaFora = receitaClassificada - receitaTrabalho;
 
   const hojeD = new Date();
   const ehMesAtual = mesSelecionado === mesAtual();
@@ -577,9 +582,9 @@ function PainelDashboard() {
 
   const porCategoria = useMemo(() => {
     const mapa = {};
-    doMes.filter((l) => l.tipo === "despesa").forEach((l) => { mapa[l.categoria] = (mapa[l.categoria] || 0) + l.valor; });
+    doMesOp.filter((l) => l.tipo === "despesa").forEach((l) => { mapa[l.categoria] = (mapa[l.categoria] || 0) + l.valor; });
     return Object.entries(mapa).sort((a, b) => b[1] - a[1]);
-  }, [doMes]);
+  }, [doMesOp]);
   const categoriaTopo = porCategoria[0];
   // Orçamento: usa as metas por categoria já cadastradas em "Metas"
   const statusOrcamento = Object.entries(metas || {})
@@ -608,10 +613,10 @@ function PainelDashboard() {
   const saldoAteHoje = useMemo(() => {
     if (!ehMesAtual) return null;
     const hj = hojeISO();
-    const r = doMes.filter((l) => l.tipo === "receita" && l.data <= hj).reduce((s, l) => s + l.valor, 0);
-    const g = doMes.filter((l) => l.tipo === "despesa" && l.data <= hj).reduce((s, l) => s + l.valor, 0);
+    const r = doMesOp.filter((l) => l.tipo === "receita" && l.data <= hj).reduce((s, l) => s + l.valor, 0);
+    const g = doMesOp.filter((l) => l.tipo === "despesa" && l.data <= hj).reduce((s, l) => s + l.valor, 0);
     return r - g;
-  }, [doMes, ehMesAtual]);
+  }, [doMesOp, ehMesAtual]);
 
   const diasSemBackup = ultimoBackup ? Math.floor((new Date(hojeISO()) - new Date(ultimoBackup)) / 86400000) : null;
   const precisaLembrarBackup = !lembreteBackupOculto && ((diasSemBackup === null && lancamentos.length > 8) || (diasSemBackup !== null && diasSemBackup >= 14));
@@ -649,11 +654,11 @@ function PainelDashboard() {
         <CardMetrica icone={Target} label="Economia" valor={`${economiaPct.toFixed(0)}%`} cor={economiaPct >= 0 ? VERDE : VERMELHO} />
       </div>
 
-      {receita > 0 && (
+      {receitaClassificada > 0 && (
         <Cartao style={{ padding: 16, marginBottom: 20 }}>
           <div style={{ fontSize: 12, color: pal.textoSuave, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 10 }}>De onde veio o dinheiro</div>
           <div style={{ display: "flex", height: 10, borderRadius: 6, overflow: "hidden", background: pal.borda, marginBottom: 12 }}>
-            {porOrigem.filter((o) => o.valor > 0).map((o) => <div key={o.id} title={o.nome} style={{ width: `${(o.valor / receita) * 100}%`, background: o.cor }} />)}
+            {porOrigem.filter((o) => o.valor > 0).map((o) => <div key={o.id} title={o.nome} style={{ width: `${(o.valor / receitaClassificada) * 100}%`, background: o.cor }} />)}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6, fontSize: 12.5 }}>
             {porOrigem.map((o) => (
@@ -679,7 +684,7 @@ function PainelDashboard() {
               return (
                 <div key={m.cat} style={{ marginBottom: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 4, gap: 8 }}>
-                    <span style={{ color: pal.texto }}>{m.cat}{m.pct >= 100 ? " — passou do limite" : m.pct >= 80 ? " — perto do limite" : ""}</span>
+                    <span style={{ color: pal.texto }}>{m.cat}{m.pct > 100 ? " — passou do limite" : m.pct >= 100 ? " — no limite" : m.pct >= 80 ? " — perto do limite" : ""}</span>
                     <span className="num-tab" style={{ color: pal.textoSuave, whiteSpace: "nowrap" }}>{formatarMoeda(m.gasto)} / {formatarMoeda(m.limite)}</span>
                   </div>
                   <Progresso valor={m.gasto} max={m.limite} corBase={cor100} />
@@ -799,7 +804,7 @@ function FormularioLancamento({ inicial, onSalvar, onFechar, modoDuplicar = fals
     origem: "salario",
     recorrente: false, recorrenteFim: "",
   };
-  const base0 = inicial ? { ...inicial, origem: inicial.origem || (inicial.tipo === "receita" ? origemDe(inicial) : "salario") } : vazio;
+  const base0 = inicial ? { ...inicial, origem: inicial.origem || (inicial.tipo === "receita" ? (origemDe(inicial) === "ajuste" ? "outras" : origemDe(inicial)) : "salario") } : vazio;
   const [f, setF] = useState(base0);
   const [sugestaoAplicada, setSugestaoAplicada] = useState("");
   const [duplicataConfirmada, setDuplicataConfirmada] = useState(false);
@@ -3235,16 +3240,24 @@ function PainelBackup() {
     mostrarToast("CSV exportado (abre direto no Excel)");
   };
 
+  const [pendente, setPendente] = useState(null);
   const importarJSON = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const texto = await file.text();
+    e.target.value = "";
     try {
       const dados = JSON.parse(texto);
-      restaurarBackup(dados);
-      mostrarToast("Backup importado com sucesso");
-    } catch (err) { alert("Arquivo inválido."); }
-    e.target.value = "";
+      if (!dados || typeof dados !== "object" || Array.isArray(dados)) throw new Error("formato");
+      const listas = ["lancamentos", "contas", "cartoes", "recorrentes", "favoritos", "categoriasDespesa", "categoriasReceita", "metasEconomia", "viagens", "investimentos"];
+      for (const k of listas) if (dados[k] !== undefined && !Array.isArray(dados[k])) throw new Error(k);
+      const lancOk = (dados.lancamentos || []).every((l) => l && typeof l.data === "string" && /^\d{4}-\d{2}-\d{2}/.test(l.data) && (l.tipo === "despesa" || l.tipo === "receita" || l.tipo === "transferencia") && typeof l.valor === "number");
+      if (!lancOk) throw new Error("lancamentos");
+      if (!listas.some((k) => (dados[k] || []).length > 0)) throw new Error("vazio");
+      setPendente({ dados, nome: file.name });
+    } catch (err) {
+      alert(err.message === "vazio" ? "O arquivo não tem dados para importar." : "Esse arquivo não parece um backup do Meu Financeiro (ou está com dados fora do formato). Nada foi alterado.");
+    }
   };
 
   return (
@@ -3270,6 +3283,14 @@ function PainelBackup() {
           Exportação em PDF não está disponível neste ambiente — use o CSV (abre no Excel/Google Sheets) ou o backup em JSON.
         </div>
       </Cartao>
+      {pendente && (
+        <Confirmacao
+          msg={`Importar "${pendente.nome}"? Isto SUBSTITUI os dados atuais pelos do arquivo: ${(pendente.dados.lancamentos || []).length} lançamentos (hoje você tem ${lancamentos.length}), ${(pendente.dados.contas || []).length} conta(s), ${(pendente.dados.cartoes || []).length} cartão(ões), ${(pendente.dados.recorrentes || []).length} recorrente(s). Se for o caso, exporte um backup antes.`}
+          onCancelar={() => setPendente(null)}
+          onConfirmar={() => { restaurarBackup(pendente.dados); setPendente(null); mostrarToast("Backup importado com sucesso"); }}
+          rotuloConfirmar="Importar e substituir"
+        />
+      )}
       <SincronizacaoDrive />
     </div>
   );
@@ -3779,7 +3800,9 @@ export default function App() {
         if (r.ultimoMesGerado === mAtual) return r;
         const mesesParaGerar = r.ultimoMesGerado ? mesesEntre(r.ultimoMesGerado, mAtual) : [mAtual];
         // pausada: não gera nada (e não acumula meses para depois); com data final, para nela
-        const mesesAtivos = r.pausada ? [] : mesesParaGerar.filter((m) => !r.dataFim || m <= r.dataFim);
+        const jaExiste = (m) => lancFinal.some((l) => l.recorrenteId === r.id && l.data.slice(0, 7) === m);
+        const mesesAtivos = r.pausada ? [] : mesesParaGerar.filter((m) =>
+          (!r.dataFim || m <= r.dataFim) && (!r.inicioMes || m >= r.inicioMes) && !(r.mesesIgnorados || []).includes(m) && !jaExiste(m));
         mesesAtivos.forEach((m) => {
           const dia = String(Math.min(r.diaDoMes, diasNoMes(m))).padStart(2, "0");
           lancFinal = [{
@@ -3821,7 +3844,9 @@ export default function App() {
       setInvestimentosState((await ler("investimentos")) || []);
       setMercadoState((await ler("mercado")) || {});
       const mesesComDados = Array.from(new Set(lancFinal.map((x) => x.data.slice(0, 7)))).sort();
-      if (mesesComDados.length > 0) setMesSelecionado(mesesComDados.at(-1));
+      // abre no mês atual; se ele não tem dados, no mais recente que já passou (parcelas/recorrências futuras não contam)
+      const hojeMes = mesAtual();
+      setMesSelecionado(mesesComDados.includes(hojeMes) ? hojeMes : (mesesComDados.filter((m) => m <= hojeMes).at(-1) || hojeMes));
       setPronto(true);
     })();
   }, []);
