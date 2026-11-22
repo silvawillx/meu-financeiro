@@ -562,8 +562,7 @@ function CardMetrica({ icone: Icone, label, valor, cor, sub }) {
 }
 
 function PainelDashboard() {
-  const { lancamentos, mesSelecionado, pal, cor, contas, categoriasDespesa, categoriasReceita, adicionarLancamento, setPagina, ultimoBackup, exportarBackupJSON, metas } = useApp();
-  const [lembreteBackupOculto, setLembreteBackupOculto] = useState(false);
+  const { lancamentos, mesSelecionado, pal, cor, contas, categoriasDespesa, categoriasReceita, adicionarLancamento, setPagina, metas } = useApp();
   const [modalRendaAberto, setModalRendaAberto] = useState(false);
   const doMes = useMemo(() => lancamentos.filter((l) => l.data.slice(0, 7) === mesSelecionado), [lancamentos, mesSelecionado]);
   const receitasDoMes = useMemo(() => doMes.filter((l) => l.tipo === "receita").sort((a, b) => (a.data < b.data ? 1 : -1)), [doMes]);
@@ -623,8 +622,6 @@ function PainelDashboard() {
     return r - g;
   }, [doMesOp, ehMesAtual]);
 
-  const diasSemBackup = ultimoBackup ? Math.floor((new Date(hojeISO()) - new Date(ultimoBackup)) / 86400000) : null;
-  const precisaLembrarBackup = !lembreteBackupOculto && ((diasSemBackup === null && lancamentos.length > 8) || (diasSemBackup !== null && diasSemBackup >= 14));
 
   return (
     <div>
@@ -632,18 +629,6 @@ function PainelDashboard() {
         <div className="titulo-serif" style={{ fontSize: 15, color: pal.textoSuave }}>Você está vendo:</div>
         <NavegadorMes />
       </div>
-      {precisaLembrarBackup && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#2F5D8A1A", border: "1px solid #2F5D8A55", borderRadius: 10, padding: "12px 16px", marginBottom: 14, flexWrap: "wrap" }}>
-          <Archive size={17} color="#2F5D8A" style={{ flexShrink: 0 }} />
-          <div style={{ fontSize: 13.5, color: pal.texto, flex: 1, minWidth: 200 }}>
-            {diasSemBackup === null ? "Você ainda não exportou um backup." : `Já fazem ${diasSemBackup} dias que você não faz backup.`} Seus dados vivem só neste navegador — vale exportar de vez em quando.
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Botao onClick={exportarBackupJSON} style={{ padding: "6px 12px" }}>Exportar agora</Botao>
-            <Botao variante="fantasma" onClick={() => setLembreteBackupOculto(true)} style={{ padding: "6px 12px" }}>Agora não</Botao>
-          </div>
-        </div>
-      )}
       {vencidos.length > 0 && (
         <div onClick={() => setPagina("lancamentos")} style={{ display: "flex", alignItems: "center", gap: 10, background: "#B4552F1A", border: `1px solid ${VERMELHO}55`, borderRadius: 10, padding: "12px 16px", marginBottom: 18, cursor: "pointer" }}>
           <AlertTriangle size={17} color={VERMELHO} style={{ flexShrink: 0 }} />
