@@ -168,6 +168,60 @@ function parseCSVTexto(texto) {
   return { mes, itens, salario };
 }
 
+// Parser de CSV "com cabeçalho": Data;Tipo;Categoria;Descrição;Pessoa;Status;Conta;Escopo;Valor
+// (o mesmo que o app exporta). Aceita ; ou , como separador, data dd/mm/aaaa ou aaaa-mm-dd
+// e, sem coluna Tipo, usa o sinal do valor (negativo = despesa).
+function dividirLinhaCSV(linha, sep) {
+  const out = []; let atual = ""; let aspas = false;
+  for (let i = 0; i < linha.length; i++) {
+    const c = linha[i];
+    if (c === '"') { if (aspas && linha[i + 1] === '"') { atual += '"'; i++; } else aspas = !aspas; }
+    else if (c === sep && !aspas) { out.push(atual); atual = ""; }
+    else atual += c;
+  }
+  out.push(atual);
+  return out.map((x) => x.trim());
+}
+function normalizarCabecalho(h) {
+  return h.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z]/g, "");
+}
+function normalizarDataCSV(d) {
+  const t = (d || "").trim();
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return null;
+}
+function parseCSVComCabecalho(texto) {
+  const linhas = texto.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim());
+  if (linhas.length === 0) return null;
+  const sep = (linhas[0].match(/;/g) || []).length >= (linhas[0].match(/,/g) || []).length ? ";" : ",";
+  const cab = dividirLinhaCSV(linhas[0], sep).map(normalizarCabecalho);
+  const idx = (...nomes) => cab.findIndex((c) => nomes.includes(c));
+  const iData = idx("data"), iValor = idx("valor", "quantia"), iDesc = idx("descricao", "historico", "nome");
+  if (iData < 0 || iValor < 0 || iDesc < 0) return null; // não é esse formato
+  const iTipo = idx("tipo"), iCat = idx("categoria"), iPessoa = idx("pessoa"), iStatus = idx("status"), iConta = idx("conta"), iEscopo = idx("escopo");
+  const itens = []; let ignoradas = 0;
+  linhas.slice(1).forEach((linha) => {
+    const c = dividirLinhaCSV(linha, sep);
+    const data = normalizarDataCSV(c[iData]);
+    const bruto = parseValorStr(c[iValor]);
+    if (!data || bruto === null || bruto === 0) { ignoradas++; return; }
+    const tipoCol = iTipo >= 0 ? (c[iTipo] || "").toLowerCase() : "";
+    const tipo = tipoCol.startsWith("rec") ? "receita" : tipoCol.startsWith("des") ? "despesa" : bruto < 0 ? "despesa" : "receita";
+    if (tipoCol.startsWith("transf")) { ignoradas++; return; } // transferências entre contas ficam de fora
+    const statusTxt = iStatus >= 0 ? (c[iStatus] || "") : "";
+    const status = /a pagar|a receber/i.test(statusTxt) ? "A pagar" : /pago|recebido/i.test(statusTxt) ? "Pago" : "-";
+    itens.push({
+      data, tipo, valor: Math.abs(bruto), descricao: c[iDesc] || "Sem descrição", categoria: iCat >= 0 ? c[iCat] : "",
+      pessoa: iPessoa >= 0 ? c[iPessoa] : "", status, contaNome: iConta >= 0 ? c[iConta] : "",
+      escopo: iEscopo >= 0 && /neg/i.test(c[iEscopo]) ? "negocio" : "pessoal", observacoes: "", incluir: true,
+    });
+  });
+  return { itens, ignoradas };
+}
+
 // Parser de extrato bancário no formato OFX (exportado por bancos como Nubank, Inter, Santander etc.)
 function parseOFXTexto(texto) {
   const itens = [];
@@ -1179,7 +1233,19 @@ function PainelLancamentos() {
     if (!file) return;
     const buffer = await file.arrayBuffer();
     let texto;
-    try { texto = new TextDecoder("iso-8859-1").decode(buffer); } catch { texto = new TextDecoder("utf-8").decode(buffer); }
+    // UTF-8 (formato que o próprio app exporta); se falhar, planilhas antigas em ISO-8859-1
+    try { texto = new TextDecoder("utf-8", { fatal: true }).decode(buffer); } catch { texto = new TextDecoder("iso-8859-1").decode(buffer); }
+    const comCabecalho = parseCSVComCabecalho(texto);
+    if (comCabecalho) {
+      if (comCabecalho.itens.length === 0) {
+        mostrarToast(comCabecalho.ignoradas > 0 ? "Nenhuma linha válida (confira data e valor)." : "O arquivo só tem o cabeçalho, sem lançamentos.", null, 4500);
+        e.target.value = ""; return;
+      }
+      const catValida = (it) => todasCategorias(it.tipo, categoriasDespesa, categoriasReceita).some((c) => c.nome === it.categoria);
+      const itensCab = comCabecalho.itens.map((it) => (catValida(it) ? it : { ...it, categoria: todasCategorias(it.tipo, categoriasDespesa, categoriasReceita).find((c) => c.nome === "Outros")?.nome || todasCategorias(it.tipo, categoriasDespesa, categoriasReceita)[0].nome }));
+      setImportState({ nomeArquivo: file.name, formato: "csv-cab", ignoradas: comCabecalho.ignoradas, itens: itensCab });
+      e.target.value = ""; return;
+    }
     const { mes, itens, salario } = parseCSVTexto(texto);
     const itensFinal = itens.map((it) => ({ ...it, tipo: "despesa" }));
     if (salario) itensFinal.push({ descricao: "Renda do mês", valor: salario, tipo: "receita", categoria: "Salário", pessoa: "", status: "Pago", observacoes: "", incluir: true });
@@ -1221,9 +1287,11 @@ function PainelLancamentos() {
         id: genId("imp"),
         data: it.data || `${importState.ano}-${String(importState.mes).padStart(2, "0")}-01`,
         tipo: it.tipo || "despesa", categoria: it.categoria || "Outros", descricao: it.descricao,
-        pessoa: it.pessoa || "", status: it.status || "-", contaId: (contas.find((c) => c.padrao) || contas[0])?.id || "", cartaoId: null,
-        valor: it.valor, escopo: "pessoal", observacoes: it.observacoes || "", anexo: null,
+        pessoa: it.pessoa || "", status: it.status || "-",
+        contaId: (it.contaNome && contas.find((c) => c.nome.trim().toLowerCase() === it.contaNome.trim().toLowerCase())?.id) || (contas.find((c) => c.padrao) || contas[0])?.id || "", cartaoId: null,
+        valor: it.valor, escopo: it.escopo || "pessoal", observacoes: it.observacoes || "", anexo: null,
         parcelaInfo: null, recorrenteId: null,
+        ...(it.tipo === "receita" ? { origem: origemDe({ categoria: it.categoria }) } : {}),
       }));
     importarLancamentos(novos);
     if (novos[0]) setMesSelecionado(novos[0].data.slice(0, 7));
@@ -1342,7 +1410,8 @@ function PainelLancamentos() {
             </div>
           )}
           <div style={{ fontSize: 12, color: pal.textoSuave, marginBottom: 8 }}>
-            {importState.itens.filter((i) => i.incluir).length} de {importState.itens.length} lançamentos serão importados.
+            {importState.itens.filter((i) => i.incluir).length} de {importState.itens.length} lançamentos serão importados e somados aos que você já tem.
+            {importState.ignoradas > 0 ? ` ${importState.ignoradas} linha(s) ignorada(s) (sem data/valor válido ou transferência).` : ""}
           </div>
           <div style={{ maxHeight: 320, overflowY: "auto", border: `1px solid ${pal.bordaSuave}`, borderRadius: 8 }}>
             {importState.itens.map((it, idx) => {
