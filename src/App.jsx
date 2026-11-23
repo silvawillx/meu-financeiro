@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Receipt, Calendar, Landmark, CreditCard, BarChart3, Target,
   Star, Archive, Settings, Plus, Trash2, Pencil, Search, X, Check, Upload,
   Download, Wallet, Sun, Moon, Zap, Paperclip, ChevronLeft, ChevronRight,
-  AlertTriangle, ArrowUp, ArrowDown, Menu, RefreshCw, Copy, Banknote, Bell, Printer, Plane, TrendingUp, CalendarRange,
+  AlertTriangle, ArrowUp, ArrowDown, Menu, RefreshCw, Copy, Banknote, Bell, Printer, Plane, TrendingUp, CalendarRange, ClipboardPaste,
 } from "lucide-react";
 
 import { MESES_PT, MESES_ABREV, DIAS_SEMANA, dataLocalISO, hojeISO, mesAtual, mesLabel, mesLabelCompleto, diasNoMes, addMeses, cicloFatura, mesesEntre } from "./lib/datas.js";
@@ -17,6 +17,9 @@ import { ORIGENS_RECEITA, ehAjusteSaldo, aconteceu, origemDe, compraNoCredito, s
 import { totalFatura, pagarFatura, limiteDoCartao } from "./lib/faturas.js";
 import { calcularDisponivel } from "./lib/disponivel.js";
 import { gerarRecorrentes } from "./lib/recorrentes.js";
+import { categorizar, aprenderRegra } from "./lib/regras.js";
+import { ehDuplicada } from "./lib/duplicadas.js";
+import { interpretarTexto } from "./lib/textoBanco.js";
 import { gerarParcelas } from "./lib/parcelas.js";
 import { TIPOS_INVEST, calcularAtivo, buscarCDI, buscarCotacao } from "./lib/investimentos.js";
 import { parseCSVTexto, parseCSVComCabecalho, parseOFXTexto, parseEntradaRapida } from "./lib/importacao.js";
@@ -736,6 +739,7 @@ function PainelLancamentos() {
     adicionarLancamento, editarLancamento, editarLancamentoGrupo, excluirLancamento, importarLancamentos,
     excluirLancamentosEmLote, editarLancamentosEmLote, pal, cor, mostrarToast,
     categoriasDespesa, categoriasReceita, pedidoNovoLanc, consumirPedidoNovoLanc,
+    regras, aprenderRegras, textoRecebido, consumirTextoRecebido,
   } = useApp();
 
   const [busca, setBusca] = useState("");
@@ -848,6 +852,32 @@ function PainelLancamentos() {
   };
 
   // ---------- Importação CSV (planilha original) ----------
+  // Antes de mostrar a prévia: sugere a categoria (regras suas + dicionário) e já desmarca o que parece duplicado.
+  const prepararItens = (itens) => itens.map((it) => {
+    const tipo = it.tipo || "despesa";
+    const validas = todasCategorias(tipo, categoriasDespesa, categoriasReceita).map((c) => c.nome);
+    const auto = categorizar(it.descricao, tipo, regras, validas);
+    const categoria = it.categoria && it.categoria !== "Outros" && validas.includes(it.categoria) ? it.categoria : auto;
+    const duplicada = it.data ? ehDuplicada({ ...it, tipo }, lancamentos) : null;
+    return { ...it, tipo, categoria, categoriaAuto: categoria, duplicada, incluir: duplicada ? false : it.incluir !== false };
+  });
+
+  // Texto colado (ou vindo do link dos Atalhos do iPhone) -> prévia para conferir
+  const lerTexto = (texto) => {
+    const itens = interpretarTexto(texto);
+    if (itens.length === 0) { mostrarToast("Não achei nenhum valor (R$) nesse texto.", null, 4000); return false; }
+    setImportState({ nomeArquivo: "Texto colado", formato: "texto", itens: prepararItens(itens), origem: "auto" });
+    return true;
+  };
+  const [colando, setColando] = useState(null); // { texto }
+  const colarDoClipboard = async () => {
+    try { const t = await navigator.clipboard.readText(); setColando((c) => ({ ...(c || {}), texto: t })); }
+    catch (e) { mostrarToast("Não consegui acessar a área de transferência. Cole o texto na caixa.", null, 4000); }
+  };
+  useEffect(() => {
+    if (textoRecebido) { lerTexto(textoRecebido); consumirTextoRecebido(); }
+  }, [textoRecebido]);
+
   const aoSelecionarCSV = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -863,7 +893,7 @@ function PainelLancamentos() {
       }
       const catValida = (it) => todasCategorias(it.tipo, categoriasDespesa, categoriasReceita).some((c) => c.nome === it.categoria);
       const itensCab = comCabecalho.itens.map((it) => (catValida(it) ? it : { ...it, categoria: todasCategorias(it.tipo, categoriasDespesa, categoriasReceita).find((c) => c.nome === "Outros")?.nome || todasCategorias(it.tipo, categoriasDespesa, categoriasReceita)[0].nome }));
-      setImportState({ nomeArquivo: file.name, formato: "csv-cab", ignoradas: comCabecalho.ignoradas, itens: itensCab });
+      setImportState({ nomeArquivo: file.name, formato: "csv-cab", ignoradas: comCabecalho.ignoradas, itens: prepararItens(itensCab), origem: "auto" });
       e.target.value = ""; return;
     }
     const { mes, itens, salario } = parseCSVTexto(texto);
@@ -873,7 +903,7 @@ function PainelLancamentos() {
       mostrarToast("Não consegui reconhecer lançamentos nesse arquivo.");
       e.target.value = ""; return;
     }
-    setImportState({ nomeArquivo: file.name, formato: "csv", mes: mes || new Date().getMonth() + 1, ano: new Date().getFullYear(), itens: itensFinal });
+    setImportState({ nomeArquivo: file.name, formato: "csv", mes: mes || new Date().getMonth() + 1, ano: new Date().getFullYear(), itens: prepararItens(itensFinal), origem: "auto" });
     e.target.value = "";
   };
 
@@ -887,7 +917,7 @@ function PainelLancamentos() {
       mostrarToast("Não consegui reconhecer transações nesse arquivo OFX.");
       e.target.value = ""; return;
     }
-    setImportState({ nomeArquivo: file.name, formato: "ofx", itens });
+    setImportState({ nomeArquivo: file.name, formato: "ofx", itens: prepararItens(itens), origem: "auto" });
     e.target.value = "";
   };
 
@@ -901,19 +931,35 @@ function PainelLancamentos() {
 
   const confirmarImportacao = () => {
     if (!importState) return;
-    const novos = importState.itens
-      .filter((it) => it.incluir)
-      .map((it) => ({
+    const [oTipo, oId] = (importState.origem || "auto").split(":");
+    const cartaoSel = oTipo === "cartao" ? cartoes.find((c) => c.id === oId) : null;
+    const contaPadrao = (contas.find((c) => c.padrao) || contas[0])?.id || "";
+    const escolhidos = importState.itens.filter((it) => it.incluir);
+    const novos = escolhidos.map((it) => {
+      const tipo = it.tipo || "despesa";
+      const contaPorNome = it.contaNome && contas.find((c) => c.nome.trim().toLowerCase() === it.contaNome.trim().toLowerCase())?.id;
+      let contaId = oTipo === "conta" ? oId : contaPorNome || contaPadrao, cartaoId = null, status = it.status || "-";
+      if (cartaoSel) {
+        contaId = cartaoSel.contaId || contaPadrao;
+        if (tipo === "despesa") { // só gasto fica no cartão; entrada de dinheiro é da conta
+          cartaoId = cartaoSel.id;
+          // compra no crédito só sai da conta quando a fatura for paga
+          if (cartaoSel.tipo !== "debito" && (status === "Pago" || status === "-")) status = "A pagar";
+        }
+      }
+      return {
         id: genId("imp"),
         data: it.data || `${importState.ano}-${String(importState.mes).padStart(2, "0")}-01`,
-        tipo: it.tipo || "despesa", categoria: it.categoria || "Outros", descricao: it.descricao,
-        pessoa: it.pessoa || "", status: it.status || "-",
-        contaId: (it.contaNome && contas.find((c) => c.nome.trim().toLowerCase() === it.contaNome.trim().toLowerCase())?.id) || (contas.find((c) => c.padrao) || contas[0])?.id || "", cartaoId: null,
+        tipo, categoria: it.categoria || "Outros", descricao: it.descricao,
+        pessoa: it.pessoa || "", status, contaId, cartaoId,
         valor: it.valor, escopo: it.escopo || "pessoal", observacoes: it.observacoes || "", anexo: null,
         parcelaInfo: null, recorrenteId: null,
-        ...(it.tipo === "receita" ? { origem: origemDe({ categoria: it.categoria }) } : {}),
-      }));
+        ...(tipo === "receita" ? { origem: origemDe({ categoria: it.categoria }) } : {}),
+      };
+    });
     importarLancamentos(novos);
+    // o que você corrigiu na prévia vira regra para a próxima vez
+    aprenderRegras(escolhidos.filter((it) => it.categoria !== it.categoriaAuto).map((it) => [it.descricao, it.categoria]));
     if (novos[0]) setMesSelecionado(novos[0].data.slice(0, 7));
     setImportState(null);
   };
@@ -927,6 +973,7 @@ function PainelLancamentos() {
           <input ref={inputOFXRef} type="file" accept=".ofx" onChange={aoSelecionarOFX} style={{ display: "none" }} />
           <Botao variante="secundario" onClick={() => inputCSVRef.current?.click()}><Upload size={14} /> Planilha (.csv)</Botao>
           <Botao variante="secundario" onClick={() => inputOFXRef.current?.click()}><Upload size={14} /> Extrato (.ofx)</Botao>
+          <Botao variante="secundario" onClick={() => setColando({ texto: "" })}><ClipboardPaste size={14} /> Colar texto do banco</Botao>
           <Botao onClick={() => { setEditando(null); setDuplicando(null); setFormSujo(false); setModalAberto(true); }}><Plus size={15} /> Novo lançamento</Botao>
         </div>
       </div>
@@ -1031,6 +1078,34 @@ function PainelLancamentos() {
       </Cartao>
       )}
 
+      {colando && (
+        <Modal titulo="Colar texto do banco" onFechar={() => setColando(null)} largura={520}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 12.5, color: pal.textoSuave }}>
+              Cole a mensagem ou notificação do banco (ex.: <em>"Compra aprovada: R$ 28,90 em MC DONALDS"</em>). Pode colar várias de uma vez, uma por linha ou separadas por linha em branco.
+              O app lê o valor e o estabelecimento, sugere a categoria e mostra uma prévia antes de salvar.
+            </div>
+            <textarea value={colando.texto} onChange={(e) => setColando({ ...colando, texto: e.target.value })} rows={6} placeholder="Cole aqui..." style={{ ...estiloInput(pal), width: "100%", resize: "vertical" }} />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Botao variante="secundario" onClick={colarDoClipboard}><ClipboardPaste size={14} /> Colar da área de transferência</Botao>
+              <Botao onClick={() => { if (lerTexto(colando.texto)) setColando(null); }}>Ler mensagens</Botao>
+            </div>
+            <details style={{ fontSize: 12.5, color: pal.textoSuave }}>
+              <summary style={{ cursor: "pointer", color: pal.texto, fontWeight: 600 }}>Como lançar com um toque no iPhone (Atalhos)</summary>
+              <ol style={{ margin: "8px 0 0", paddingLeft: 18, lineHeight: 1.5 }}>
+                <li>Abra o app <strong>Atalhos</strong> e crie um atalho novo.</li>
+                <li>Nos detalhes do atalho, ative <strong>Mostrar na Folha de Compartilhamento</strong> (tipo de entrada: Texto).</li>
+                <li>Adicione a ação <strong>Codificar URL</strong> (ou "URL Encode") usando a entrada do atalho.</li>
+                <li>Adicione <strong>Abrir URLs</strong> com este endereço, e no fim o texto codificado:<br />
+                  <code style={{ wordBreak: "break-all", background: pal.bordaSuave, padding: "2px 5px", borderRadius: 4 }}>{`${window.location.origin}${window.location.pathname}?lancar=`}</code></li>
+                <li>Depois, em qualquer mensagem, e-mail ou anotação com o texto do banco: <strong>Compartilhar → seu atalho</strong>. O app abre já com o lançamento para você conferir e confirmar.</li>
+              </ol>
+              <div style={{ marginTop: 8 }}>Notificações de aplicativos (como a do Nubank) o iPhone não deixa outro app ler; nesses casos, copie o texto da notificação e use o botão acima. Os nomes das ações podem variar um pouco conforme a versão do iOS.</div>
+            </details>
+          </div>
+        </Modal>
+      )}
+
       {importState && (
         <Modal titulo={`Importar "${importState.nomeArquivo}"`} onFechar={() => setImportState(null)} largura={560}>
           {importState.formato === "csv" && (
@@ -1045,32 +1120,46 @@ function PainelLancamentos() {
               </Campo>
             </div>
           )}
-          <div style={{ fontSize: 12, color: pal.textoSuave, marginBottom: 8 }}>
-            {importState.itens.filter((i) => i.incluir).length} de {importState.itens.length} lançamentos serão importados e somados aos que você já tem.
+          <Campo label="Lançar em">
+            <select value={importState.origem || "auto"} onChange={(e) => setImportState({ ...importState, origem: e.target.value })} style={estiloInput(pal)}>
+              <option value="auto">Automático (conta do arquivo ou a principal)</option>
+              <optgroup label="Contas">{contas.filter((c) => !c.arquivada).map((c) => <option key={c.id} value={`conta:${c.id}`}>{c.nome}</option>)}</optgroup>
+              {cartoes.length > 0 && <optgroup label="Cartões">{cartoes.map((c) => <option key={c.id} value={`cartao:${c.id}`}>{c.nome}{c.tipo === "debito" ? " (débito)" : " (crédito)"}</option>)}</optgroup>}
+            </select>
+          </Campo>
+          <div style={{ fontSize: 12, color: pal.textoSuave, margin: "10px 0 8px" }}>
+            {importState.itens.filter((i) => i.incluir).length} de {importState.itens.length} lançamentos serão importados e somados aos que você já tem
+            (gastos: <span className="num-tab">{formatarMoeda(importState.itens.filter((i) => i.incluir && i.tipo !== "receita").reduce((s, i) => s + i.valor, 0))}</span>).
+            {importState.itens.filter((i) => i.duplicada).length > 0 ? ` ${importState.itens.filter((i) => i.duplicada).length} possível(is) duplicada(s) já vieram desmarcadas.` : ""}
             {importState.ignoradas > 0 ? ` ${importState.ignoradas} linha(s) ignorada(s) (sem data/valor válido ou transferência).` : ""}
+            {" "}Se você trocar uma categoria, o app aprende para a próxima.
           </div>
           <div style={{ maxHeight: 320, overflowY: "auto", border: `1px solid ${pal.bordaSuave}`, borderRadius: 8 }}>
             {importState.itens.map((it, idx) => {
               const dataDoItem = it.data || `${importState.ano}-${String(importState.mes).padStart(2, "0")}`;
-              const possivelDuplicata = lancamentos.some((l) =>
+              const possivelDuplicata = it.duplicada ?? lancamentos.some((l) =>
                 l.tipo === (it.tipo || "despesa") && Math.abs(l.valor - it.valor) < 0.01 &&
                 l.descricao.trim().toLowerCase() === it.descricao.trim().toLowerCase() &&
                 (it.data ? l.data === it.data : l.data.slice(0, 7) === dataDoItem)
               );
               return (
-                <div key={idx} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderTop: idx === 0 ? "none" : `1px solid ${pal.bordaSuave}`, opacity: it.incluir ? 1 : 0.4 }}>
-                  <input type="checkbox" checked={it.incluir} onChange={(e) => atualizarItemImport(idx, "incluir", e.target.checked)} style={{ flexShrink: 0 }} />
+                <div key={idx} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 12px", borderTop: idx === 0 ? "none" : `1px solid ${pal.bordaSuave}`, opacity: it.incluir ? 1 : 0.4 }}>
+                  <input type="checkbox" checked={it.incluir} onChange={(e) => atualizarItemImport(idx, "incluir", e.target.checked)} style={{ flexShrink: 0, marginTop: 3 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: pal.texto, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.descricao}</div>
-                    <div style={{ fontSize: 11, color: pal.textoSuave }}>
-                      {it.tipo === "receita" ? "Receita" : "Despesa"}{it.data ? ` · ${new Date(it.data + "T00:00:00").toLocaleDateString("pt-BR")}` : ""}{it.pessoa ? ` · ${it.pessoa}` : ""}
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: pal.texto, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{it.descricao}</div>
+                      <div className="num-tab" style={{ fontSize: 13, fontWeight: 600, flexShrink: 0, color: it.tipo === "receita" ? VERDE : pal.texto }}>{it.tipo === "receita" ? "+" : ""}{formatarMoeda(it.valor)}</div>
                     </div>
-                    {possivelDuplicata && <div style={{ fontSize: 10.5, color: "#C98A3A", marginTop: 2 }}>⚠ possível duplicata — já existe algo parecido</div>}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+                      <span style={{ fontSize: 11, color: pal.textoSuave }}>
+                        {it.tipo === "receita" ? "Receita" : "Despesa"}{it.data ? ` · ${new Date(it.data + "T00:00:00").toLocaleDateString("pt-BR")}` : ""}{it.pessoa ? ` · ${it.pessoa}` : ""}
+                      </span>
+                      <select value={it.categoria} onChange={(e) => atualizarItemImport(idx, "categoria", e.target.value)} style={{ fontSize: 12, padding: "4px 6px", borderRadius: 6, border: `1px solid ${pal.borda}` }}>
+                        {todasCategorias(it.tipo, categoriasDespesa, categoriasReceita).map((c) => <option key={c.nome} value={c.nome}>{c.nome}</option>)}
+                      </select>
+                    </div>
+                    {possivelDuplicata && <div style={{ fontSize: 10.5, color: "#C98A3A", marginTop: 3 }}>⚠ possível duplicata — já existe algo parecido</div>}
                   </div>
-                  <select value={it.categoria} onChange={(e) => atualizarItemImport(idx, "categoria", e.target.value)} style={{ fontSize: 12, padding: "5px 6px", borderRadius: 6, border: `1px solid ${pal.borda}`, flexShrink: 0 }}>
-                    {todasCategorias(it.tipo, categoriasDespesa, categoriasReceita).map((c) => <option key={c.nome} value={c.nome}>{c.nome}</option>)}
-                  </select>
-                  <div className="num-tab" style={{ fontSize: 13, fontWeight: 600, width: 80, textAlign: "right", flexShrink: 0, color: it.tipo === "receita" ? VERDE : pal.texto }}>{formatarMoeda(it.valor)}</div>
                 </div>
               );
             })}
@@ -3109,6 +3198,8 @@ export default function App() {
   const [historico, setHistoricoState] = useState([]);
   const [viagens, setViagensState] = useState([]);
   const [investimentos, setInvestimentosState] = useState([]);
+  const [regras, setRegrasState] = useState({}); // "uber" -> "Transporte": o que o app aprendeu com você
+  const [textoRecebido, setTextoRecebido] = useState(""); // texto vindo do link ?lancar= (Atalhos do iPhone)
   const [mercado, setMercadoState] = useState({});
   const historicoRef = useRef([]);
   useEffect(() => { historicoRef.current = historico; }, [historico]);
@@ -3141,6 +3232,20 @@ export default function App() {
     setToast({ msg, acao });
     toastTimeoutRef.current = setTimeout(() => setToast(null), duracaoMs);
   };
+
+  // Link do tipo https://seu-site/?lancar=TEXTO: abre a prévia do lançamento (nada é salvo sem você confirmar).
+  useEffect(() => {
+    if (!pronto) return;
+    try {
+      const u = new URL(window.location.href);
+      const t = u.searchParams.get("lancar");
+      if (!t) return;
+      u.searchParams.delete("lancar");
+      window.history.replaceState({}, "", u.pathname + u.search + u.hash);
+      setPagina("lancamentos");
+      setTextoRecebido(t);
+    } catch (e) { /* link inválido: ignora */ }
+  }, [pronto]);
 
   // Se o Supabase recusar uma gravação (sem internet, sessão expirada...), avisa.
   useEffect(() => {
@@ -3218,6 +3323,7 @@ export default function App() {
       const vg = (await ler("viagens")) || [];
       setViagensState(vg);
       setInvestimentosState((await ler("investimentos")) || []);
+      setRegrasState((await ler("regrasCategoria")) || {});
       setMercadoState((await ler("mercado")) || {});
       const mesesComDados = Array.from(new Set(lancFinal.map((x) => x.data.slice(0, 7)))).sort();
       // abre no mês atual; se ele não tem dados, no mais recente que já passou (parcelas/recorrências futuras não contam)
@@ -3304,6 +3410,11 @@ export default function App() {
   const editarInvestimento = (id, dados) => salvar("investimentos", investimentos.map((a) => (a.id === id ? { ...a, ...dados } : a)), setInvestimentosState);
   const excluirInvestimento = (id) => { salvar("investimentos", investimentos.filter((a) => a.id !== id), setInvestimentosState); mostrarToast("Investimento excluído"); };
   const movimentarInvestimento = (id, movimento) => salvar("investimentos", investimentos.map((a) => (a.id === id ? { ...a, movimentos: [...(a.movimentos || []), movimento] } : a)), setInvestimentosState);
+  const aprenderRegras = (pares) => {
+    const novas = pares.reduce((acc, [desc, cat]) => aprenderRegra(acc, desc, cat), regras);
+    if (novas !== regras) salvar("regrasCategoria", novas, setRegrasState);
+  };
+  const consumirTextoRecebido = () => setTextoRecebido("");
   const atualizarMercado = (novo) => salvar("mercado", novo, setMercadoState);
 
   const adicionarViagem = (dados) => salvar("viagens", [...viagens, { ...dados, id: genId("viagem") }], setViagensState);
@@ -3524,6 +3635,7 @@ export default function App() {
     if (dados.metasEconomia) salvar("metasEconomia", dados.metasEconomia, setMetasEconomiaState);
     if (dados.viagens) salvar("viagens", dados.viagens, setViagensState);
     if (dados.investimentos) salvar("investimentos", dados.investimentos, setInvestimentosState);
+    if (dados.regrasCategoria && typeof dados.regrasCategoria === "object") salvar("regrasCategoria", dados.regrasCategoria, setRegrasState);
   };
 
   const salvarConfig = (novosCampos) => {
@@ -3546,7 +3658,7 @@ export default function App() {
   const desativarNotificacoes = () => { setNotificacoesAtivasState(false); salvarConfig({ notificacoesAtivas: false }); };
 
   const exportarBackupJSON = () => {
-    const dados = { lancamentos, contas, cartoes, metas, favoritos, recorrentes, categoriasDespesa, categoriasReceita, metasEconomia, viagens, investimentos, exportadoEm: new Date().toISOString() };
+    const dados = { lancamentos, contas, cartoes, metas, favoritos, recorrentes, categoriasDespesa, categoriasReceita, metasEconomia, viagens, investimentos, regrasCategoria: regras, exportadoEm: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(dados, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `backup-financeiro-${hojeISO()}.json`; a.click();
@@ -3576,6 +3688,7 @@ export default function App() {
     pal, mostrarToast, setPagina,
     pedidoNovoLanc, consumirPedidoNovoLanc,
     pagarFaturaCartao, recomecarDoZero,
+    regras, aprenderRegras, textoRecebido, consumirTextoRecebido,
     investimentos, mercado, adicionarInvestimento, editarInvestimento, excluirInvestimento, movimentarInvestimento, atualizarMercado,
   };
 
