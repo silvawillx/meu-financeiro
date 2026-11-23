@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Receipt, Calendar, Landmark, CreditCard, BarChart3, Target,
   Star, Archive, Settings, Plus, Trash2, Pencil, Search, X, Check, Upload,
   Download, Wallet, Sun, Moon, Zap, Paperclip, ChevronLeft, ChevronRight,
-  AlertTriangle, ArrowUp, ArrowDown, Menu, RefreshCw, Copy, Banknote, Bell, Printer, Plane, TrendingUp,
+  AlertTriangle, ArrowUp, ArrowDown, Menu, RefreshCw, Copy, Banknote, Bell, Printer, Plane, TrendingUp, CalendarRange,
 } from "lucide-react";
 
 import { MESES_PT, MESES_ABREV, DIAS_SEMANA, dataLocalISO, hojeISO, mesAtual, mesLabel, mesLabelCompleto, diasNoMes, addMeses, cicloFatura, mesesEntre } from "./lib/datas.js";
@@ -23,6 +23,7 @@ import { parseCSVTexto, parseCSVComCabecalho, parseOFXTexto, parseEntradaRapida 
 
 import { PALETA, VERDE, VERMELHO } from "./tema.js";
 import VisaoPorConta from "./componentes/VisaoPorConta.jsx";
+import PainelProjecao from "./componentes/PainelProjecao.jsx";
 import { AppCtx, useApp } from "./contexto.js";
 import { Botao, Cartao, Campo, estiloInput, Modal, Confirmacao, Toast, Progresso, NavegadorMes } from "./ui.jsx";
 
@@ -78,6 +79,7 @@ const ITENS_MENU = [
   { id: "recorrentes", label: "Recorrentes", icone: RefreshCw },
   { id: "dividas", label: "Dívidas", icone: Banknote },
   { id: "investimentos", label: "Investimentos", icone: TrendingUp },
+  { id: "projecao", label: "Projeção", icone: CalendarRange },
   { id: "viagens", label: "Viagens", icone: Plane },
   { id: "estatisticas", label: "Estatísticas", icone: BarChart3 },
   { id: "metas", label: "Metas", icone: Target },
@@ -3798,7 +3800,7 @@ export default function App() {
 
   const paginas = {
     dashboard: PainelDashboard, lancamentos: PainelLancamentos, calendario: PainelCalendario,
-    contas: PainelContas, cartoes: PainelCartoes, recorrentes: PainelRecorrentes, dividas: PainelDividas, investimentos: PainelInvestimentos, viagens: PainelViagens, estatisticas: PainelEstatisticas,
+    contas: PainelContas, cartoes: PainelCartoes, recorrentes: PainelRecorrentes, dividas: PainelDividas, investimentos: PainelInvestimentos, projecao: PainelProjecao, viagens: PainelViagens, estatisticas: PainelEstatisticas,
     metas: PainelMetas, favoritos: PainelFavoritos, backup: PainelBackup, config: PainelConfiguracoes,
   };
   const PaginaAtual = paginas[pagina] || PainelDashboard;
