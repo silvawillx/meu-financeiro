@@ -26,11 +26,18 @@ export const origemDe = (l) => {
   return "outras";
 };
 
+// Compra no cartão de CRÉDITO: o dinheiro só sai da conta quando a fatura é paga,
+// então a compra não mexe no saldo da conta (cartão de débito mexe, pois sai na hora).
+export const compraNoCredito = (l, cartoes = []) =>
+  l.tipo === "despesa" && !!l.cartaoId && cartoes.some((c) => c.id === l.cartaoId && c.tipo !== "debito");
+
 // Saldo de uma conta: saldo inicial + o que entrou - o que saiu.
 // Por padrão só conta o que já aconteceu (data até hoje e não "A pagar");
-// com incluirFuturos = true vira o saldo "previsto".
-export function saldoConta(lancamentos, conta, { incluirFuturos = false, hoje = hojeISO() } = {}) {
-  const dela = lancamentos.filter((l) => l.contaId === conta.id && (incluirFuturos || aconteceu(l, hoje)));
+// com incluirFuturos = true vira o saldo "previsto" (até a data `ate`, se informada). Passe `cartoes` para que compras
+// no crédito fiquem de fora (elas saem da conta no pagamento da fatura).
+export function saldoConta(lancamentos, conta, { incluirFuturos = false, hoje = hojeISO(), cartoes = [], ate = null } = {}) {
+  const conta_ok = (l) => (incluirFuturos ? !ate || l.data <= ate : aconteceu(l, hoje));
+  const dela = lancamentos.filter((l) => l.contaId === conta.id && conta_ok(l) && !compraNoCredito(l, cartoes));
   const soma = (fn) => dela.filter(fn).reduce((s, l) => s + l.valor, 0);
   const receitas = soma((l) => l.tipo === "receita");
   const despesas = soma((l) => l.tipo === "despesa");

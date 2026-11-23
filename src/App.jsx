@@ -13,7 +13,9 @@ import {
 import { MESES_PT, MESES_ABREV, DIAS_SEMANA, dataLocalISO, hojeISO, mesAtual, mesLabel, mesLabelCompleto, diasNoMes, addMeses, cicloFatura, mesesEntre } from "./lib/datas.js";
 import { genId, formatarMoeda } from "./lib/formato.js";
 import { CATEGORIAS_DESPESA_PADRAO, CATEGORIAS_RECEITA_PADRAO, todasCategorias, corCategoria, rotuloStatus } from "./lib/categorias.js";
-import { ORIGENS_RECEITA, ehAjusteSaldo, aconteceu, origemDe, saldoConta as calcularSaldoConta } from "./lib/lancamentos.js";
+import { ORIGENS_RECEITA, ehAjusteSaldo, aconteceu, origemDe, compraNoCredito, saldoConta as calcularSaldoConta } from "./lib/lancamentos.js";
+import { totalFatura, pagarFatura } from "./lib/faturas.js";
+import { calcularDisponivel } from "./lib/disponivel.js";
 import { gerarRecorrentes } from "./lib/recorrentes.js";
 import { gerarParcelas } from "./lib/parcelas.js";
 import { TIPOS_INVEST, calcularAtivo, buscarCDI, buscarCotacao } from "./lib/investimentos.js";
@@ -291,10 +293,11 @@ function CardMetrica({ icone: Icone, label, valor, cor, sub }) {
 }
 
 function PainelDashboard() {
-  const { lancamentos, mesSelecionado, pal, cor, contas, categoriasDespesa, categoriasReceita, adicionarLancamento, setPagina, metas } = useApp();
+  const { lancamentos, mesSelecionado, pal, cor, contas, cartoes, metasEconomia, categoriasDespesa, categoriasReceita, adicionarLancamento, setPagina, metas } = useApp();
   const [modalRendaAberto, setModalRendaAberto] = useState(false);
   const doMes = useMemo(() => lancamentos.filter((l) => l.data.slice(0, 7) === mesSelecionado), [lancamentos, mesSelecionado]);
   const receitasDoMes = useMemo(() => doMes.filter((l) => l.tipo === "receita").sort((a, b) => (a.data < b.data ? 1 : -1)), [doMes]);
+  const disp = useMemo(() => calcularDisponivel({ contas, lancamentos, cartoes, metasEconomia }), [contas, lancamentos, cartoes, metasEconomia]);
   const doMesOp = useMemo(() => doMes.filter((l) => !ehAjusteSaldo(l)), [doMes]); // sem ajustes de saldo
   const receita = doMesOp.filter((l) => l.tipo === "receita").reduce((s, l) => s + l.valor, 0);
   const gasto = doMesOp.filter((l) => l.tipo === "despesa").reduce((s, l) => s + l.valor, 0);
@@ -372,6 +375,21 @@ function PainelDashboard() {
         <CardMetrica icone={saldo >= 0 ? ArrowUp : ArrowDown} label={ehMesAtual ? "Saldo previsto" : "Saldo"} valor={formatarMoeda(saldo)} cor={saldo >= 0 ? VERDE : VERMELHO} sub={ehMesAtual ? `Até hoje: ${formatarMoeda(saldoAteHoje)}` : undefined} />
         <CardMetrica icone={Target} label="Economia" valor={`${economiaPct.toFixed(0)}%`} cor={economiaPct >= 0 ? VERDE : VERMELHO} />
       </div>
+
+      {mesSelecionado === mesAtual() && (
+        <Cartao style={{ padding: 16, marginBottom: 20 }}>
+          <div style={{ fontSize: 12, color: pal.textoSuave, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 6 }}>Disponível para gastar até o fim do mês</div>
+          <div className="num-tab" style={{ fontSize: 26, fontWeight: 600, color: disp.disponivel >= 0 ? VERDE : VERMELHO }}>{formatarMoeda(disp.disponivel)}</div>
+          <div style={{ fontSize: 12.5, color: pal.textoSuave, marginTop: 2, marginBottom: 10 }}>
+            {disp.disponivel > 0 ? `≈ ${formatarMoeda(disp.porDia)} por dia, contando hoje (${disp.diasRestantes} dias)` : disp.disponivel < 0 ? "Faltam recursos para cobrir o que vence neste mês" : "Nada sobrando além da reserva e das contas do mês"}
+          </div>
+          {[["Saldo das contas", disp.saldoContas], ["Reservado (metas de economia)", -disp.reservado], ["A pagar até o fim do mês", -disp.aPagar], ["A receber até o fim do mês", disp.aReceber]].map(([rotulo, v]) => (
+            <div key={rotulo} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: pal.textoSuave, padding: "2px 0" }}>
+              <span>{rotulo}</span><span className="num-tab" style={{ color: pal.texto }}>{v < 0 ? "−" : ""}{formatarMoeda(Math.abs(v))}</span>
+            </div>
+          ))}
+        </Cartao>
+      )}
 
       {receitaClassificada > 0 && (
         <Cartao style={{ padding: 16, marginBottom: 20 }}>
@@ -670,7 +688,8 @@ function FormularioLancamento({ inicial, onSalvar, onFechar, modoDuplicar = fals
           const [tipo, id] = e.target.value.split(":");
           if (tipo === "conta") { setF({ ...f, contaId: id, cartaoId: "" }); return; }
           const cartao = cartoes.find((c) => c.id === id);
-          setF({ ...f, cartaoId: id, contaId: cartao?.contaId || f.contaId });
+          // compra no crédito fica "A pagar" até a fatura ser paga
+          setF({ ...f, cartaoId: id, contaId: cartao?.contaId || f.contaId, status: cartao?.tipo !== "debito" && f.status === "-" ? "A pagar" : f.status });
         }} style={estiloInput(pal)}>
           <optgroup label="Conta / Pix / dinheiro">
             <option value="conta:">Sem conta</option>
@@ -1275,7 +1294,7 @@ function PainelCalendario() {
    11. CONTAS
    ============================================================ */
 function PainelContas() {
-  const { contas, lancamentos, adicionarConta, editarConta, excluirConta, definirContaPadrao, arquivarConta, adicionarTransferencia, ajustarSaldoConta, pal, cor } = useApp();
+  const { contas, lancamentos, cartoes, adicionarConta, editarConta, excluirConta, definirContaPadrao, arquivarConta, adicionarTransferencia, ajustarSaldoConta, pal, cor } = useApp();
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState(null);
   const [novo, setNovo] = useState({ nome: "", tipo: "conta", saldoInicial: "", cor: "#1B2A4A", saldoMinimo: "", padrao: false });
@@ -1285,7 +1304,8 @@ function PainelContas() {
   const [transferenciaAberta, setTransferenciaAberta] = useState(false);
   const [conferenciaAberta, setConferenciaAberta] = useState(null);
 
-  const saldoConta = (contaId, saldoInicial, incluirFuturos = false) => calcularSaldoConta(lancamentos, { id: contaId, saldoInicial }, { incluirFuturos });
+  const fimDoMes = () => `${mesAtual()}-${String(diasNoMes(mesAtual())).padStart(2, "0")}`;
+  const saldoConta = (contaId, saldoInicial, incluirFuturos = false) => calcularSaldoConta(lancamentos, { id: contaId, saldoInicial }, { incluirFuturos, cartoes, ate: incluirFuturos ? fimDoMes() : null });
 
   const qtdLancamentosVinculados = (contaId) => lancamentos.filter((l) => l.contaId === contaId).length;
 
@@ -1344,7 +1364,7 @@ function PainelContas() {
                 {formatarMoeda(saldo)}
               </div>
               {Math.abs(saldoConta(c.id, c.saldoInicial, true) - saldo) >= 0.01 && (
-                <div style={{ fontSize: 11, color: pal.textoSuave, marginTop: 2 }}>Previsto com o que ainda vem: <span className="num-tab">{formatarMoeda(saldoConta(c.id, c.saldoInicial, true))}</span></div>
+                <div style={{ fontSize: 11, color: pal.textoSuave, marginTop: 2 }}>Previsto até o fim do mês: <span className="num-tab">{formatarMoeda(saldoConta(c.id, c.saldoInicial, true))}</span></div>
               )}
               {saldoBaixo && <div style={{ fontSize: 11, color: VERMELHO, marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} /> abaixo do mínimo ({formatarMoeda(c.saldoMinimo)})</div>}
               <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
@@ -1403,16 +1423,16 @@ function PainelContas() {
 }
 
 function ExtratoConta({ conta, onFechar }) {
-  const { lancamentos, pal } = useApp();
+  const { lancamentos, cartoes, pal } = useApp();
   const movimentos = useMemo(() => {
-    const dela = lancamentos.filter((l) => l.contaId === conta.id && aconteceu(l)).sort((a, b) => (a.data < b.data ? -1 : 1));
+    const dela = lancamentos.filter((l) => l.contaId === conta.id && aconteceu(l) && !compraNoCredito(l, cartoes)).sort((a, b) => (a.data < b.data ? -1 : 1));
     let saldo = conta.saldoInicial || 0;
     return dela.map((l) => {
       const entrada = l.tipo === "receita" || (l.tipo === "transferencia" && l.direcao === "entrada");
       saldo += entrada ? l.valor : -l.valor;
       return { ...l, saldoAposMovimento: saldo, entrada };
     });
-  }, [lancamentos, conta]);
+  }, [lancamentos, cartoes, conta]);
 
   const evolucaoMensal = useMemo(() => {
     const porMes = {};
@@ -1450,7 +1470,7 @@ function ExtratoConta({ conta, onFechar }) {
             <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderTop: i === 0 ? "none" : `1px solid ${pal.bordaSuave}` }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 500, color: pal.texto, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {m.descricao}{m.tipo === "transferencia" && (m.direcao === "saida" ? " (saída p/ transferência)" : " (entrada de transferência)")}
+                  {m.descricao}{m.tipo === "transferencia" && (m.faturaMes ? " (pagamento de fatura)" : m.direcao === "saida" ? " (saída p/ transferência)" : " (entrada de transferência)")}
                 </div>
                 <div style={{ fontSize: 11, color: pal.textoSuave }}>{new Date(m.data + "T00:00:00").toLocaleDateString("pt-BR")}</div>
               </div>
@@ -1548,12 +1568,24 @@ function ModalConferenciaSaldo({ conta, saldoCalculado, onFechar, onAjustar }) {
    12. CARTÕES
    ============================================================ */
 function PainelCartoes() {
-  const { cartoes, contas, lancamentos, mesSelecionado, adicionarCartao, editarCartao, excluirCartao, pal, cor, investimentos } = useApp();
+  const { cartoes, contas, lancamentos, mesSelecionado, adicionarCartao, editarCartao, excluirCartao, pagarFaturaCartao, pal, cor, investimentos } = useApp();
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState(null);
   const [novo, setNovo] = useState({ nome: "", tipo: "credito", contaId: "", limite: "", fechamento: "", vencimento: "", cor: "#8A3E5C" });
   const [excluirId, setExcluirId] = useState(null);
   const [faturaAberta, setFaturaAberta] = useState(null);
+  const [pagando, setPagando] = useState(null); // { cartao, mesRef, valor, contaId, data }
+  const abrirPagamento = (c) => setPagando({
+    cartao: c, mesRef: mesSelecionado, valor: String(totalFatura(lancamentos, c, mesSelecionado)).replace(".", ","),
+    contaId: c.contaId || (contas.find((x) => x.padrao) || contas[0])?.id || "", data: hojeISO(),
+  });
+  const confirmarPagamento = (e) => {
+    e.preventDefault();
+    const v = parseFloat(String(pagando.valor).replace(",", "."));
+    if (!v || v <= 0 || !pagando.contaId) return;
+    pagarFaturaCartao(pagando.cartao, pagando.mesRef, pagando.contaId, v, pagando.data);
+    setPagando(null);
+  };
 
   const usoCartao = (cartao) => {
     const ciclo = cicloFatura(cartao, mesSelecionado);
@@ -1625,7 +1657,10 @@ function PainelCartoes() {
                 })()}
                 {pct.toFixed(0)}% do limite utilizado{ciclo ? ` · fatura de ${new Date(ciclo.inicio + "T00:00:00").toLocaleDateString("pt-BR")} a ${new Date(ciclo.fim + "T00:00:00").toLocaleDateString("pt-BR")}` : " (defina o dia de fechamento para calcular a fatura real)"}
               </div>
-              <Botao variante="fantasma" style={{ marginTop: 10, padding: "5px 8px", fontSize: 11.5 }} onClick={() => setFaturaAberta(c)}>Ver fatura detalhada</Botao>
+              <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+                <Botao variante="fantasma" style={{ padding: "5px 8px", fontSize: 11.5 }} onClick={() => setFaturaAberta(c)}>Ver fatura detalhada</Botao>
+                <Botao variante="secundario" style={{ padding: "5px 8px", fontSize: 11.5 }} onClick={() => abrirPagamento(c)}>Pagar fatura</Botao>
+              </div>
               </>)}
             </Cartao>
           );
@@ -1681,6 +1716,32 @@ function PainelCartoes() {
         />
       )}
       {faturaAberta && <FaturaCartao cartao={faturaAberta} onFechar={() => setFaturaAberta(null)} />}
+      {pagando && (
+        <Modal titulo={`Pagar fatura — ${pagando.cartao.nome}`} onFechar={() => setPagando(null)} largura={400}>
+          <form onSubmit={confirmarPagamento} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 12.5, color: pal.textoSuave }}>
+              O valor sai da conta escolhida uma vez só e as compras dessa fatura ficam marcadas como pagas. Não conta de novo como gasto.
+            </div>
+            <Campo label="Fatura de">
+              <select value={pagando.mesRef} onChange={(e) => setPagando({ ...pagando, mesRef: e.target.value, valor: String(totalFatura(lancamentos, pagando.cartao, e.target.value)).replace(".", ",") })} style={estiloInput(pal)}>
+                {[0, -1, -2, 1].map((d) => addMeses(`${mesAtual()}-01`, d).slice(0, 7)).map((m) => <option key={m} value={m}>{mesLabelCompleto(m)}</option>)}
+              </select>
+            </Campo>
+            <Campo label="Valor pago (R$)"><input type="text" inputMode="decimal" className="num-tab" value={pagando.valor} onChange={(e) => setPagando({ ...pagando, valor: e.target.value })} style={estiloInput(pal)} /></Campo>
+            <Campo label="Pagou com a conta">
+              <select value={pagando.contaId} onChange={(e) => setPagando({ ...pagando, contaId: e.target.value })} style={estiloInput(pal)} required>
+                <option value="">Escolha a conta</option>
+                {contas.filter((c) => !c.arquivada).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+              </select>
+            </Campo>
+            <Campo label="Data do pagamento"><input type="date" value={pagando.data} onChange={(e) => setPagando({ ...pagando, data: e.target.value })} style={estiloInput(pal)} /></Campo>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Botao variante="fantasma" onClick={() => setPagando(null)}>Cancelar</Botao>
+              <Botao type="submit">Registrar pagamento</Botao>
+            </div>
+          </form>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -3677,6 +3738,10 @@ export default function App() {
     salvar("lancamentos", [novo, ...lancamentos], setLancamentosState);
     mostrarToast("Ajuste registrado — saldo conferido");
   };
+  const pagarFaturaCartao = (cartao, mesRef, contaId, valor, data) => {
+    salvar("lancamentos", pagarFatura({ lancamentos, cartao, mesRef, contaId, valor, data }), setLancamentosState);
+    mostrarToast(`Fatura ${cartao.nome} paga: ${formatarMoeda(valor)}`);
+  };
   const adicionarCartao = (c) => salvar("cartoes", [...cartoes, { ...c, id: genId("cartao") }], setCartoesState);
   const editarCartao = (id, dados) => salvar("cartoes", cartoes.map((c) => (c.id === id ? { ...c, ...dados } : c)), setCartoesState);
   const excluirCartao = (id) => {
@@ -3829,6 +3894,7 @@ export default function App() {
     cor, setCor,
     pal, mostrarToast, setPagina,
     pedidoNovoLanc, consumirPedidoNovoLanc,
+    pagarFaturaCartao,
     investimentos, mercado, adicionarInvestimento, editarInvestimento, excluirInvestimento, movimentarInvestimento, atualizarMercado,
   };
 
