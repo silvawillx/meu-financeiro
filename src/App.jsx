@@ -14,7 +14,7 @@ import { MESES_PT, MESES_ABREV, DIAS_SEMANA, dataLocalISO, hojeISO, mesAtual, me
 import { genId, formatarMoeda } from "./lib/formato.js";
 import { CATEGORIAS_DESPESA_PADRAO, CATEGORIAS_RECEITA_PADRAO, todasCategorias, corCategoria, rotuloStatus } from "./lib/categorias.js";
 import { ORIGENS_RECEITA, ehAjusteSaldo, aconteceu, origemDe, compraNoCredito, saldoConta as calcularSaldoConta } from "./lib/lancamentos.js";
-import { totalFatura, pagarFatura } from "./lib/faturas.js";
+import { totalFatura, pagarFatura, limiteDoCartao } from "./lib/faturas.js";
 import { calcularDisponivel } from "./lib/disponivel.js";
 import { gerarRecorrentes } from "./lib/recorrentes.js";
 import { gerarParcelas } from "./lib/parcelas.js";
@@ -1515,9 +1515,10 @@ function PainelCartoes() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(230px,1fr))", gap: 14 }}>
         {cartoes.length === 0 && <div style={{ fontSize: 13, color: pal.textoSuave }}>Nenhum cartão cadastrado ainda.</div>}
         {cartoes.map((c) => {
-          const usado = usoCartao(c);
+          const usado = usoCartao(c); // fatura do ciclo (e, no débito, gasto do mês)
           const ehDebito = c.tipo === "debito";
-          const pct = c.limite > 0 ? Math.min(100, (usado / c.limite) * 100) : 0;
+          const lim = limiteDoCartao(lancamentos, c); // limite comprometido: tudo que ainda não foi pago
+          const pct = lim.pct;
           const ciclo = cicloFatura(c, mesSelecionado);
           return (
             <Cartao key={c.id} style={{ padding: 16 }}>
@@ -1536,18 +1537,19 @@ function PainelCartoes() {
                 </>
               ) : (<>
               <div style={{ fontSize: 11, color: pal.textoSuave, marginBottom: 10 }}>Crédito · Fecha dia {c.fechamento || "—"} · Vence dia {c.vencimento || "—"}</div>
-              <Progresso valor={usado} max={c.limite} corBase={c.cor} />
+              <Progresso valor={lim.emAberto} max={c.limite} corBase={c.cor} />
               <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11.5 }}>
-                <span className="num-tab" style={{ color: pal.textoSuave }}>{formatarMoeda(usado)} usado</span>
-                <span className="num-tab" style={{ color: pal.textoSuave }}>{formatarMoeda(Math.max(0, c.limite - usado))} livre</span>
+                <span className="num-tab" style={{ color: pal.textoSuave }}>{formatarMoeda(lim.emAberto)} em aberto</span>
+                <span className="num-tab" style={{ color: pal.textoSuave }}>{formatarMoeda(lim.livre)} livre</span>
               </div>
+              <div style={{ fontSize: 11, color: pal.textoSuave, marginTop: 2 }}>Fatura do ciclo: <span className="num-tab">{formatarMoeda(usado)}</span> · o limite inclui parcelas futuras</div>
               <div style={{ fontSize: 11, color: pct >= 90 ? VERMELHO : pal.textoSuave, marginTop: 2 }}>
                 {(() => {
                   const garantias = investimentos.filter((a) => a.cartaoId === c.id && a.limiteGarantido > 0);
                   const total = garantias.reduce((s, a) => s + a.limiteGarantido, 0);
                   return total > 0 ? <div style={{ color: "#C98A3A", marginBottom: 2 }}>{formatarMoeda(total)} do limite é garantido por {garantias.map((a) => a.nome).join(", ")}</div> : null;
                 })()}
-                {pct.toFixed(0)}% do limite utilizado{ciclo ? ` · fatura de ${new Date(ciclo.inicio + "T00:00:00").toLocaleDateString("pt-BR")} a ${new Date(ciclo.fim + "T00:00:00").toLocaleDateString("pt-BR")}` : " (defina o dia de fechamento para calcular a fatura real)"}
+                {pct.toFixed(0)}% do limite comprometido{lim.estourou ? " — passou do limite" : ""}{ciclo ? ` · fatura de ${new Date(ciclo.inicio + "T00:00:00").toLocaleDateString("pt-BR")} a ${new Date(ciclo.fim + "T00:00:00").toLocaleDateString("pt-BR")}` : " (defina o dia de fechamento para calcular a fatura real)"}
               </div>
               <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
                 <Botao variante="fantasma" style={{ padding: "5px 8px", fontSize: 11.5 }} onClick={() => setFaturaAberta(c)}>Ver fatura detalhada</Botao>

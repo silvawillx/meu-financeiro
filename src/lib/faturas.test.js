@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { comprasDaFatura, totalFatura, pagarFatura } from "./faturas.js";
+import { comprasDaFatura, totalFatura, pagarFatura, limiteDoCartao } from "./faturas.js";
 
 let n = 0;
 const novoId = (p) => `${p}-${++n}`;
@@ -22,5 +22,26 @@ describe("fatura do cartão", () => {
     expect(r[0]).toMatchObject({ tipo: "transferencia", direcao: "saida", contaId: "a1", valor: 50, status: "Pago", faturaMes: "2026-11" });
     expect(r.find((l) => l.id === "a").status).toBe("Pago");
     expect(r.find((l) => l.id === "b").status).toBe("A pagar"); // outra fatura, continua pendente
+  });
+});
+
+describe("limite do cartão", () => {
+  const c = { id: "c1", limite: 200 };
+  it("o que está em aberto (inclusive parcelas futuras) ocupa o limite", () => {
+    const ls = [compra({ valor: 50 }), compra({ valor: 70, data: "2027-03-05", parcelaInfo: { atual: 5, total: 8 } })];
+    expect(limiteDoCartao(ls, c)).toMatchObject({ limite: 200, emAberto: 120, livre: 80, estourou: false });
+  });
+  it("compra paga libera o limite", () => {
+    expect(limiteDoCartao([compra({ valor: 150, status: "Pago" })], c)).toMatchObject({ emAberto: 0, livre: 200, pct: 0 });
+  });
+  it("status indefinido (-) conta como em aberto; outro cartão não conta", () => {
+    expect(limiteDoCartao([compra({ valor: 40, status: "-" }), compra({ valor: 999, cartaoId: "outro" })], c).emAberto).toBe(40);
+  });
+  it("passou do limite: livre zera e avisa", () => {
+    const r = limiteDoCartao([compra({ valor: 260 })], c);
+    expect(r).toMatchObject({ livre: 0, pct: 100, estourou: true });
+  });
+  it("sem limite cadastrado, porcentagem 0", () => {
+    expect(limiteDoCartao([compra({ valor: 10 })], { id: "c1" }).pct).toBe(0);
   });
 });
