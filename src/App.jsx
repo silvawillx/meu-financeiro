@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useContext, createContext } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Sankey,
   XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Cell,
@@ -21,6 +21,11 @@ import { gerarParcelas } from "./lib/parcelas.js";
 import { TIPOS_INVEST, calcularAtivo, buscarCDI, buscarCotacao } from "./lib/investimentos.js";
 import { parseCSVTexto, parseCSVComCabecalho, parseOFXTexto, parseEntradaRapida } from "./lib/importacao.js";
 
+import { PALETA, VERDE, VERMELHO } from "./tema.js";
+import VisaoPorConta from "./componentes/VisaoPorConta.jsx";
+import { AppCtx, useApp } from "./contexto.js";
+import { Botao, Cartao, Campo, estiloInput, Modal, Confirmacao, Toast, Progresso, NavegadorMes } from "./ui.jsx";
+
 /* ============================================================
    1. CONSTANTES E HELPERS
    ============================================================ */
@@ -28,12 +33,6 @@ import { parseCSVTexto, parseCSVComCabecalho, parseOFXTexto, parseEntradaRapida 
 /* ============================================================
    2. TEMA
    ============================================================ */
-const PALETA = {
-  claro: { fundo: "#F7F5F0", cartao: "#FFFFFF", borda: "#E4DFD3", texto: "#1B2A4A", textoSuave: "#6B6459", bordaSuave: "#F0ECE2" },
-  escuro: { fundo: "#11161D", cartao: "#181F28", borda: "#2A323D", texto: "#EDEAE2", textoSuave: "#8B93A0", bordaSuave: "#232B35" },
-};
-const VERDE = "#3E6F5C";
-const VERMELHO = "#B4552F";
 
 /* ============================================================
    3. SEED / MIGRAÇÃO
@@ -63,138 +62,10 @@ function migrarDadosAntigos(gastosAntigos, rendasAntigas) {
 /* ============================================================
    4. CONTEXT
    ============================================================ */
-const AppCtx = createContext(null);
-const useApp = () => useContext(AppCtx);
 
 /* ============================================================
    5. COMPONENTES DE APOIO (UI)
    ============================================================ */
-function Botao({ children, onClick, variante = "primario", type = "button", style = {}, title }) {
-  const { cor, pal } = useApp();
-  const base = { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "9px 14px", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", border: "1px solid transparent", transition: "opacity .15s" };
-  const variantes = {
-    primario: { background: cor, color: "#fff" },
-    secundario: { background: "transparent", color: cor, borderColor: cor },
-    perigo: { background: "transparent", color: VERMELHO, borderColor: VERMELHO },
-    fantasma: { background: "transparent", color: pal.textoSuave },
-  };
-  return (
-    <button type={type} title={title} onClick={onClick} style={{ ...base, ...variantes[variante], ...style }}
-      onMouseEnter={(e) => (e.currentTarget.style.opacity = 0.85)} onMouseLeave={(e) => (e.currentTarget.style.opacity = 1)}>
-      {children}
-    </button>
-  );
-}
-
-function Cartao({ children, style = {}, className = "" }) {
-  const { pal } = useApp();
-  return <div className={className} style={{ background: pal.cartao, border: `1px solid ${pal.borda}`, borderRadius: 12, ...style }}>{children}</div>;
-}
-
-function Campo({ label, children }) {
-  const { pal } = useApp();
-  return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: pal.textoSuave }}>
-      {label}
-      {children}
-    </label>
-  );
-}
-function estiloInput(pal) {
-  return { padding: "8px 10px", borderRadius: 8, border: `1px solid ${pal.borda}`, fontSize: 14, background: pal.cartao, color: pal.texto };
-}
-
-function Modal({ titulo, onFechar, children, largura = 480 }) {
-  const { pal } = useApp();
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onFechar(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onFechar]);
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }} onClick={onFechar}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: pal.cartao, borderRadius: 14, padding: 22, width: "100%", maxWidth: largura, maxHeight: "88vh", overflowY: "auto", border: `1px solid ${pal.borda}` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div className="titulo-serif" style={{ fontSize: 18, fontWeight: 600, color: pal.texto }}>{titulo}</div>
-          <button onClick={onFechar} style={{ background: "none", border: "none", cursor: "pointer", color: pal.textoSuave }}><X size={18} /></button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Confirmacao({ msg, onCancelar, onConfirmar, rotuloConfirmar = "Excluir" }) {
-  const { pal } = useApp();
-  return (
-    <Modal titulo="Confirmar" onFechar={onCancelar} largura={360}>
-      <div style={{ fontSize: 14, color: pal.texto, marginBottom: 18, display: "flex", gap: 10 }}>
-        <AlertTriangle size={18} color={VERMELHO} style={{ flexShrink: 0, marginTop: 2 }} />
-        <span>{msg}</span>
-      </div>
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-        <Botao variante="fantasma" onClick={onCancelar}>Cancelar</Botao>
-        <Botao variante="perigo" onClick={onConfirmar}>{rotuloConfirmar}</Botao>
-      </div>
-    </Modal>
-  );
-}
-
-function Toast({ toast, onFechar }) {
-  if (!toast) return null;
-  const { msg, acao } = typeof toast === "string" ? { msg: toast, acao: null } : toast;
-  return (
-    <div style={{ position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", background: "#1B2A4A", color: "#fff", padding: "10px 12px 10px 18px", borderRadius: 999, fontSize: 13, zIndex: 200, boxShadow: "0 4px 14px rgba(0,0,0,0.2)", display: "flex", alignItems: "center", gap: 10 }}>
-      <Check size={14} /> {msg}
-      {acao && (
-        <button
-          onClick={() => { acao.onClick(); onFechar(); }}
-          style={{ background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", borderRadius: 999, padding: "5px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
-          {acao.label}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function Progresso({ valor, max, corBase }) {
-  const pct = max > 0 ? Math.min(100, (valor / max) * 100) : 0;
-  const estourou = valor > max;
-  return (
-    <div style={{ height: 8, borderRadius: 999, background: "#E4DFD333", overflow: "hidden" }}>
-      <div style={{ height: "100%", width: `${pct}%`, background: estourou ? VERMELHO : corBase, transition: "width .3s" }} />
-    </div>
-  );
-}
-
-// Navegador de mês grande e visual — setas pra trocar de mês, mês/ano em destaque,
-// e um atalho pra voltar rápido ao mês atual quando você estiver navegando por outros.
-function NavegadorMes({ compacto = false }) {
-  const { mesSelecionado, setMesSelecionado, pal, cor } = useApp();
-  const mudarMes = (delta) => setMesSelecionado(addMeses(`${mesSelecionado}-01`, delta).slice(0, 7));
-  const ehMesAtual = mesSelecionado === mesAtual();
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 4, background: pal.cartao, border: `1px solid ${pal.borda}`, borderRadius: 10, padding: "6px 8px" }}>
-      <button onClick={() => mudarMes(-1)} title="Mês anterior" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 30, height: 30, border: "none", background: "transparent", color: pal.texto, cursor: "pointer", borderRadius: 6 }}>
-        <ChevronLeft size={18} />
-      </button>
-      <div style={{ minWidth: compacto ? 90 : 140, textAlign: "center" }}>
-        <div className="titulo-serif" style={{ fontSize: compacto ? 14 : 17, fontWeight: 600, color: pal.texto, textTransform: "capitalize", lineHeight: 1.1 }}>
-          {mesLabelCompleto(mesSelecionado)}
-        </div>
-        {!ehMesAtual && (
-          <button onClick={() => setMesSelecionado(mesAtual())} style={{ fontSize: 10.5, color: cor, background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}>
-            voltar para hoje
-          </button>
-        )}
-      </div>
-      <button onClick={() => mudarMes(1)} title="Próximo mês" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 30, height: 30, border: "none", background: "transparent", color: pal.texto, cursor: "pointer", borderRadius: 6 }}>
-        <ChevronRight size={18} />
-      </button>
-    </div>
-  );
-}
-
 /* ============================================================
    6. SIDEBAR
    ============================================================ */
@@ -874,6 +745,9 @@ function PainelLancamentos() {
   const [formSujo, setFormSujo] = useState(false);
   const [confirmandoFechar, setConfirmandoFechar] = useState(false);
   const [importState, setImportState] = useState(null);
+  const [filtrosAbertos, setFiltrosAbertos] = useState(false);
+  const [visao, setVisaoState] = useState(() => { try { return localStorage.getItem("visaoLancamentos") || "conta"; } catch (e) { return "conta"; } });
+  const setVisao = (v) => { setVisaoState(v); try { localStorage.setItem("visaoLancamentos", v); } catch (e) { /* sem armazenamento local: tudo bem */ } };
   const [selecionados, setSelecionados] = useState(new Set());
   const [confirmandoLote, setConfirmandoLote] = useState(false);
   const [categoriaLote, setCategoriaLote] = useState("");
@@ -1054,11 +928,22 @@ function PainelLancamentos() {
         </div>
       </div>
 
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {[["conta", "Por conta"], ["lista", "Lista"]].map(([v, rotulo]) => (
+          <button key={v} onClick={() => setVisao(v)} style={{ padding: "7px 16px", borderRadius: 8, border: `1px solid ${visao === v ? "transparent" : pal.borda}`, background: visao === v ? cor : "transparent", color: visao === v ? "#fff" : pal.textoSuave, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>{rotulo}</button>
+        ))}
+      </div>
+
       <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: "1 1 220px" }}>
           <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: pal.textoSuave }} />
           <input ref={buscaRef} type="text" placeholder="Buscar (nome, descrição, categoria...) — atalho: /" value={busca} onChange={(e) => setBusca(e.target.value)} style={{ ...estiloInput(pal), width: "100%", paddingLeft: 30 }} />
         </div>
+        <button onClick={() => setFiltrosAbertos((v) => !v)} aria-expanded={filtrosAbertos}
+          style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${pal.borda}`, background: filtrosAbertos ? `${cor}14` : "transparent", color: pal.texto, fontSize: 13, cursor: "pointer" }}>
+          Filtros{Object.values(filtros).filter(Boolean).length > 0 ? ` (${Object.values(filtros).filter(Boolean).length})` : ""} {filtrosAbertos ? "▴" : "▾"}
+        </button>
+        {filtrosAbertos && (<>
         <select value={filtros.status} onChange={(e) => setFiltros({ ...filtros, status: e.target.value })} style={estiloInput(pal)}>
           <option value="">Status: todos</option><option value="Pago">Pago</option><option value="A pagar">A pagar</option>
         </select>
@@ -1081,6 +966,7 @@ function PainelLancamentos() {
           <option value="valor_desc">Maior valor primeiro</option>
           <option value="valor_asc">Menor valor primeiro</option>
         </select>
+        </>)}
       </div>
 
       {selecionados.size > 0 && (
@@ -1100,6 +986,9 @@ function PainelLancamentos() {
         </div>
       )}
 
+      {visao === "conta" ? (
+        <VisaoPorConta lista={filtrados} onEditar={(l) => { setEditando(l); setDuplicando(null); setFormSujo(false); setModalAberto(true); }} />
+      ) : (
       <Cartao style={{ overflow: "hidden" }}>
         {filtrados.length === 0 ? (
           <div style={{ padding: 24, fontSize: 13, color: pal.textoSuave }}>Nenhum lançamento encontrado com esses filtros.</div>
@@ -1137,6 +1026,7 @@ function PainelLancamentos() {
           </>
         )}
       </Cartao>
+      )}
 
       {importState && (
         <Modal titulo={`Importar "${importState.nomeArquivo}"`} onFechar={() => setImportState(null)} largura={560}>
