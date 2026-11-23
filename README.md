@@ -32,7 +32,9 @@ npm run build      # gera a pasta dist/
 
 | Peça | Onde | O que faz |
 |---|---|---|
-| Interface | `src/App.jsx`, `src/componentes/`, `src/ui.jsx` | Telas e componentes (React) |
+| Estado e dados | `src/App.jsx` | Carrega e guarda os dados e entrega tudo às telas (contexto em `src/contexto.js`) |
+| Telas | `src/telas/` | Uma por tela: Dashboard, Lançamentos, Contas, Cartões, Investimentos, Projeção, Metas, Backup... |
+| Componentes | `src/componentes/`, `src/ui.jsx` | Formulário de lançamento, menu, visão por conta, botões e janelas comuns; tema em `src/tema.js` |
 | Lógica | `src/lib/*.js` | Saldo, parcelas, recorrentes, fatura, projeção, importação... **tudo testado** (`*.test.js`) |
 | Dados | `src/storage-shim.js` + `src/lib/armazenamento.js` | Grava na tabela `dados` do Supabase, com proteção contra dois aparelhos se sobrescrevendo |
 | Login | `src/Auth.jsx` | E-mail e senha (Supabase Auth); o cadastro público fica desligado |
@@ -74,4 +76,5 @@ O projeto está ligado ao GitHub: cada push na `main` publica sozinho. A Vercel 
 npm test && npm run lint
 ```
 
-Regras de negócio novas devem entrar em `src/lib/` com teste, não dentro de componentes.
+Regras de negócio novas devem entrar em `src/lib/` com teste, não dentro de telas ou componentes.
+Uma tela nova vira um arquivo em `src/telas/` e é registrada em `src/App.jsx` (mapa `paginas`) e no menu (`ITENS_MENU` em `src/componentes/Navegacao.jsx`).

@@ -129,3 +129,19 @@ export function NavegadorMes({ compacto = false }) {
     </div>
   );
 }
+
+export function CardMetrica({ icone: Icone, label, valor, cor, sub }) {
+  const { pal } = useApp();
+  return (
+    <Cartao style={{ padding: 16, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <div style={{ width: 28, height: 28, borderRadius: 7, background: `${cor}1A`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Icone size={15} color={cor} />
+        </div>
+        <div style={{ fontSize: 11.5, color: pal.textoSuave, textTransform: "uppercase", letterSpacing: "0.03em" }}>{label}</div>
+      </div>
+      <div className="num-tab kpi-valor" style={{ fontSize: 21, fontWeight: 600, color: pal.texto }}>{valor}</div>
+      {sub && <div style={{ fontSize: 11.5, color: pal.textoSuave, marginTop: 3 }}>{sub}</div>}
+    </Cartao>
+  );
+}
