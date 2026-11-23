@@ -24,6 +24,7 @@ import { parseCSVTexto, parseCSVComCabecalho, parseOFXTexto, parseEntradaRapida 
 import { PALETA, VERDE, VERMELHO } from "./tema.js";
 import VisaoPorConta from "./componentes/VisaoPorConta.jsx";
 import PainelProjecao from "./componentes/PainelProjecao.jsx";
+import Recomecar from "./componentes/Recomecar.jsx";
 import { AppCtx, useApp } from "./contexto.js";
 import { Botao, Cartao, Campo, estiloInput, Modal, Confirmacao, Toast, Progresso, NavegadorMes } from "./ui.jsx";
 
@@ -2863,6 +2864,7 @@ function PainelBackup() {
   };
 
   const [pendente, setPendente] = useState(null);
+  const [recomecando, setRecomecando] = useState(false);
   const importarJSON = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2905,6 +2907,12 @@ function PainelBackup() {
           Exportação em PDF não está disponível neste ambiente — use o CSV (abre no Excel/Google Sheets) ou o backup em JSON.
         </div>
       </Cartao>
+      <Cartao style={{ padding: 18, maxWidth: 420, marginTop: 14, border: "1px solid #B4552F55" }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: pal.texto, marginBottom: 6 }}>Recomeçar do zero</div>
+        <div style={{ fontSize: 12, color: pal.textoSuave, marginBottom: 8 }}>Apaga os lançamentos para você reorganizar tudo. Baixa um backup antes e deixa você escolher o que manter.</div>
+        <Botao variante="perigo" onClick={() => setRecomecando(true)}>Recomeçar do zero…</Botao>
+      </Cartao>
+      {recomecando && <Recomecar onFechar={() => setRecomecando(false)} />}
       {pendente && (
         <Confirmacao
           msg={`Importar "${pendente.nome}"? Isto SUBSTITUI os dados atuais pelos do arquivo: ${(pendente.dados.lancamentos || []).length} lançamentos (hoje você tem ${lancamentos.length}), ${(pendente.dados.contas || []).length} conta(s), ${(pendente.dados.cartoes || []).length} cartão(ões), ${(pendente.dados.recorrentes || []).length} recorrente(s). Se for o caso, exporte um backup antes.`}
@@ -2913,149 +2921,43 @@ function PainelBackup() {
           rotuloConfirmar="Importar e substituir"
         />
       )}
-      <SincronizacaoDrive />
     </div>
   );
 }
 
 /* ============================================================
-   16b. SINCRONIZAÇÃO COM GOOGLE DRIVE (opcional, avançado)
+   18b. ENTRADA RÁPIDA
    ============================================================ */
-function carregarScriptGIS() {
-  return new Promise((resolve, reject) => {
-    if (window.google?.accounts?.oauth2) return resolve();
-    const s = document.createElement("script");
-    s.src = "https://accounts.google.com/gsi/client";
-    s.onload = resolve;
-    s.onerror = reject;
-    document.head.appendChild(s);
-  });
-}
-const NOME_ARQUIVO_DRIVE = "meu-financeiro-backup.json";
-async function driveEncontrarArquivo(token) {
-  const query = encodeURIComponent(`name='${NOME_ARQUIVO_DRIVE}' and trashed=false`);
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name,modifiedTime)`, { headers: { Authorization: `Bearer ${token}` } });
-  const data = await res.json();
-  return data.files?.[0] || null;
-}
-async function driveCriarArquivo(token, conteudoObj) {
-  const metadata = { name: NOME_ARQUIVO_DRIVE, mimeType: "application/json" };
-  const boundary = "-------meufinanceiro";
-  const body =
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
-    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(conteudoObj)}\r\n--${boundary}--`;
-  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": `multipart/related; boundary=${boundary}` },
-    body,
-  });
-  return res.json();
-}
-async function driveAtualizarArquivo(token, fileId, conteudoObj) {
-  await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(conteudoObj),
-  });
-}
-async function driveBaixarArquivo(token, fileId) {
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
-  return res.json();
-}
+function EntradaRapida() {
+  const { adicionarLancamento, contas, pal, mostrarToast } = useApp();
+  const [texto, setTexto] = useState("");
+  const [aberto, setAberto] = useState(false);
 
-function SincronizacaoDrive() {
-  const {
-    lancamentos, contas, cartoes, metas, favoritos, recorrentes, categoriasDespesa, categoriasReceita, metasEconomia, viagens, investimentos,
-    restaurarBackup, clientIdDrive, salvarClientIdDrive, mostrarToast, pal,
-  } = useApp();
-  const [conectado, setConectado] = useState(false);
-  const [carregando, setCarregando] = useState("");
-  const [fileId, setFileId] = useState(() => { try { return localStorage.getItem("driveFileId") || null; } catch { return null; } });
-  const tokenClientRef = useRef(null);
-  const tokenRef = useRef(null);
-
-  const inicializarTokenClient = async () => {
-    await carregarScriptGIS();
-    tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
-      client_id: clientIdDrive.trim(),
-      scope: "https://www.googleapis.com/auth/drive.file",
-      callback: () => {},
-    });
+  const lancar = (e) => {
+    e.preventDefault();
+    const r = parseEntradaRapida(texto);
+    if (!r.valor) { alert("Não consegui identificar um valor no texto. Tente algo como 'mercado 120'."); return; }
+    adicionarLancamento({
+      tipo: "despesa", data: r.data, categoria: r.categoria, descricao: r.descricao, pessoa: "",
+      status: "-", contaId: (contas.find((c) => c.padrao) || contas[0])?.id || "", cartaoId: "", observacoes: "", anexo: null,
+    }, r.valor);
+    mostrarToast(`"${r.descricao}" — ${formatarMoeda(r.valor)} lançado`);
+    setTexto(""); setAberto(false);
   };
 
-  const conectar = async () => {
-    if (!clientIdDrive.trim()) { mostrarToast("Cole o Client ID do Google antes de conectar"); return; }
-    setCarregando("conectando");
-    try {
-      await inicializarTokenClient();
-      tokenClientRef.current.callback = (resp) => {
-        setCarregando("");
-        if (resp.error) { mostrarToast("Não foi possível conectar ao Google"); return; }
-        tokenRef.current = resp.access_token;
-        setConectado(true);
-        mostrarToast("Conectado ao Google Drive");
-      };
-      tokenClientRef.current.requestAccessToken();
-    } catch (e) {
-      setCarregando("");
-      mostrarToast("Erro ao carregar o login do Google — confira sua internet");
-    }
-  };
-
-  const salvarNoDrive = async () => {
-    if (!tokenRef.current) return;
-    setCarregando("salvando");
-    const dados = { lancamentos, contas, cartoes, metas, favoritos, recorrentes, categoriasDespesa, categoriasReceita, metasEconomia, viagens, investimentos, exportadoEm: new Date().toISOString() };
-    try {
-      let id = fileId;
-      if (!id) id = (await driveEncontrarArquivo(tokenRef.current))?.id || null;
-      if (id) await driveAtualizarArquivo(tokenRef.current, id, dados);
-      else { const criado = await driveCriarArquivo(tokenRef.current, dados); id = criado.id; }
-      setFileId(id);
-      try { localStorage.setItem("driveFileId", id); } catch {}
-      mostrarToast("Backup salvo no Google Drive");
-    } catch (e) {
-      mostrarToast("Erro ao salvar no Google Drive");
-    }
-    setCarregando("");
-  };
-
-  const restaurarDoDrive = async () => {
-    if (!tokenRef.current) return;
-    setCarregando("restaurando");
-    try {
-      let id = fileId;
-      if (!id) id = (await driveEncontrarArquivo(tokenRef.current))?.id;
-      if (!id) { mostrarToast("Nenhum backup encontrado no Drive ainda"); setCarregando(""); return; }
-      const dados = await driveBaixarArquivo(tokenRef.current, id);
-      restaurarBackup(dados);
-      mostrarToast("Dados restaurados do Google Drive");
-    } catch (e) {
-      mostrarToast("Erro ao restaurar do Google Drive");
-    }
-    setCarregando("");
-  };
-
+  if (!aberto) {
+    return (
+      <button onClick={() => setAberto(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: `1px solid ${pal.borda}`, color: pal.textoSuave, borderRadius: 8, padding: "8px 12px", fontSize: 13, cursor: "pointer" }}>
+        <Zap size={14} /> Entrada rápida
+      </button>
+    );
+  }
   return (
-    <Cartao style={{ padding: 18, maxWidth: 420, marginTop: 16 }}>
-      <div style={{ fontSize: 13.5, fontWeight: 600, color: pal.texto, marginBottom: 6 }}>Sincronizar com Google Drive (opcional)</div>
-      <div style={{ fontSize: 12, color: pal.textoSuave, marginBottom: 10 }}>
-        Recurso avançado: precisa de uma configuração única sua no Google Cloud (veja o passo a passo no README). Depois de pronto, dá pra salvar e restaurar os dados de qualquer computador ou celular.
-      </div>
-      <Campo label="Client ID do Google (OAuth)">
-        <input type="text" placeholder="xxxxxxxx.apps.googleusercontent.com" value={clientIdDrive} onChange={(e) => salvarClientIdDrive(e.target.value)} style={estiloInput(pal)} />
-      </Campo>
-      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-        {!conectado ? (
-          <Botao onClick={conectar}>{carregando === "conectando" ? "Conectando..." : "Conectar ao Google Drive"}</Botao>
-        ) : (
-          <>
-            <Botao variante="secundario" onClick={salvarNoDrive}>{carregando === "salvando" ? "Salvando..." : "Salvar no Drive agora"}</Botao>
-            <Botao variante="fantasma" onClick={restaurarDoDrive}>{carregando === "restaurando" ? "Restaurando..." : "Restaurar do Drive"}</Botao>
-          </>
-        )}
-      </div>
-    </Cartao>
+    <form onSubmit={lancar} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <input autoFocus type="text" placeholder='Ex.: "mercado 120 hoje" ou "uber 32 ontem"' value={texto} onChange={(e) => setTexto(e.target.value)} style={{ ...estiloInput(pal), width: 260 }} />
+      <Botao type="submit"><Zap size={14} /> Lançar</Botao>
+      <button type="button" onClick={() => setAberto(false)} style={{ border: "none", background: "none", color: pal.textoSuave, cursor: "pointer" }}><X size={16} /></button>
+    </form>
   );
 }
 
@@ -3122,17 +3024,7 @@ function GerenciadorCategorias({ tipo }) {
 }
 
 function PainelConfiguracoes() {
-  const { tema, setTema, cor, setCor, pal, notificacoesAtivas, ativarNotificacoes, desativarNotificacoes, pin, definirPin, historico } = useApp();
-  const [novoPin, setNovoPin] = useState("");
-  const [confirmaPin, setConfirmaPin] = useState("");
-  const [erroPin, setErroPin] = useState("");
-
-  const salvarNovoPin = () => {
-    if (novoPin.length < 4) { setErroPin("O PIN precisa ter pelo menos 4 dígitos."); return; }
-    if (novoPin !== confirmaPin) { setErroPin("Os dois PINs digitados são diferentes."); return; }
-    definirPin(novoPin);
-    setNovoPin(""); setConfirmaPin(""); setErroPin("");
-  };
+  const { tema, setTema, cor, setCor, pal, notificacoesAtivas, ativarNotificacoes, desativarNotificacoes, historico } = useApp();
 
   return (
     <div>
@@ -3165,27 +3057,6 @@ function PainelConfiguracoes() {
         <div style={{ fontSize: 13, fontWeight: 600, color: pal.texto }}>Conta</div>
         <div style={{ fontSize: 11.5, color: pal.textoSuave }}>Seus dados ficam salvos na nuvem e só aparecem depois do login.</div>
         <Botao variante="secundario" style={{ alignSelf: "flex-start" }} onClick={() => window.storage.sair && window.storage.sair()}>Sair da conta</Botao>
-      </Cartao>
-      <Cartao style={{ padding: 18, maxWidth: 420, display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: pal.texto }}>Segurança — trava por PIN</div>
-        <div style={{ fontSize: 11.5, color: pal.textoSuave }}>
-          É uma trava simples pra quem pegar seu computador/celular não abrir seus dados de primeira — não é criptografia de verdade, então não use pra dados extremamente sensíveis.
-        </div>
-        {pin ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 12.5, color: VERDE }}>✓ PIN ativado</span>
-            <Botao variante="perigo" style={{ padding: "6px 10px" }} onClick={() => definirPin("")}>Remover PIN</Botao>
-          </div>
-        ) : (
-          <>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <input type="password" inputMode="numeric" maxLength={6} placeholder="Novo PIN (4-6 dígitos)" value={novoPin} onChange={(e) => setNovoPin(e.target.value.replace(/\D/g, ""))} style={{ ...estiloInput(pal), width: 170 }} />
-              <input type="password" inputMode="numeric" maxLength={6} placeholder="Confirmar PIN" value={confirmaPin} onChange={(e) => setConfirmaPin(e.target.value.replace(/\D/g, ""))} style={{ ...estiloInput(pal), width: 140 }} />
-            </div>
-            {erroPin && <div style={{ fontSize: 11.5, color: VERMELHO }}>{erroPin}</div>}
-            <Botao onClick={salvarNovoPin} style={{ alignSelf: "flex-start" }}>Ativar PIN</Botao>
-          </>
-        )}
       </Cartao>
       <Cartao style={{ padding: 18, maxWidth: 420, display: "flex", flexDirection: "column", gap: 20 }}>
         <div style={{ fontSize: 12, color: pal.textoSuave }}>Clique no nome pra renomear, na bolinha pra trocar a cor.</div>
@@ -3222,100 +3093,6 @@ function PainelConfiguracoes() {
    18. ENTRADA RÁPIDA (barra fixa no topo)
    ============================================================ */
 /* ============================================================
-   18b. TELA DE BLOQUEIO (PIN local)
-   ============================================================ */
-function TelaBloqueio({ pal, onDesbloquear }) {
-  const [valor, setValor] = useState("");
-  const [erro, setErro] = useState(false);
-  const [confirmandoReset, setConfirmandoReset] = useState(false);
-
-  const digitar = (d) => {
-    if (valor.length >= 6) return;
-    const novo = valor + d;
-    setValor(novo);
-    setErro(false);
-    if (novo.length >= 4) {
-      setTimeout(() => {
-        if (!onDesbloquear(novo)) { setErro(true); setValor(""); }
-      }, 120);
-    }
-  };
-  const apagar = () => setValor((v) => v.slice(0, -1));
-
-  return (
-    <div style={{ minHeight: "100vh", background: pal.fundo, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', sans-serif", padding: 20 }}>
-      <div style={{ width: 40, height: 40, borderRadius: 10, background: "#1B2A4A", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
-        <Wallet size={20} color="#fff" />
-      </div>
-      <div style={{ fontSize: 15, color: pal.texto, marginBottom: 4, fontWeight: 600 }}>Digite seu PIN</div>
-      <div style={{ fontSize: 12, color: erro ? VERMELHO : pal.textoSuave, marginBottom: 18, minHeight: 16 }}>{erro ? "PIN incorreto, tente de novo" : "Só você tem acesso aos seus dados"}</div>
-      <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} style={{ width: 14, height: 14, borderRadius: "50%", border: `1px solid ${pal.borda}`, background: valor.length > i ? pal.texto : "transparent" }} />
-        ))}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 60px)", gap: 12 }}>
-        {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((n) => (
-          <button key={n} onClick={() => digitar(n)} style={{ width: 60, height: 60, borderRadius: "50%", border: `1px solid ${pal.borda}`, background: pal.cartao, color: pal.texto, fontSize: 20, cursor: "pointer" }}>{n}</button>
-        ))}
-        <div />
-        <button onClick={() => digitar("0")} style={{ width: 60, height: 60, borderRadius: "50%", border: `1px solid ${pal.borda}`, background: pal.cartao, color: pal.texto, fontSize: 20, cursor: "pointer" }}>0</button>
-        <button onClick={apagar} style={{ width: 60, height: 60, borderRadius: "50%", border: "none", background: "transparent", color: pal.textoSuave, fontSize: 13, cursor: "pointer" }}>Apagar</button>
-      </div>
-      <button onClick={() => setConfirmandoReset(true)} style={{ marginTop: 26, fontSize: 12, color: pal.textoSuave, background: "none", border: "none", textDecoration: "underline", cursor: "pointer" }}>
-        Esqueci meu PIN
-      </button>
-      {confirmandoReset && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div style={{ background: pal.cartao, borderRadius: 14, padding: 22, maxWidth: 340, border: `1px solid ${pal.borda}` }}>
-            <div style={{ fontSize: 14, color: pal.texto, marginBottom: 16 }}>
-              Isso remove a trava de PIN, mas <strong>não apaga nenhum dado</strong>. Como tudo fica só neste navegador, não existe um jeito de "recuperar" o PIN de outra forma. Quer mesmo remover a trava?
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <button onClick={() => setConfirmandoReset(false)} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${pal.borda}`, background: "transparent", color: pal.textoSuave, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
-              <button onClick={() => { onDesbloquear("__RESET__"); }} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: VERMELHO, color: "#fff", cursor: "pointer", fontSize: 13 }}>Remover trava</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EntradaRapida() {
-  const { adicionarLancamento, contas, pal, mostrarToast } = useApp();
-  const [texto, setTexto] = useState("");
-  const [aberto, setAberto] = useState(false);
-
-  const lancar = (e) => {
-    e.preventDefault();
-    const r = parseEntradaRapida(texto);
-    if (!r.valor) { alert("Não consegui identificar um valor no texto. Tente algo como 'mercado 120'."); return; }
-    adicionarLancamento({
-      tipo: "despesa", data: r.data, categoria: r.categoria, descricao: r.descricao, pessoa: "",
-      status: "-", contaId: (contas.find((c) => c.padrao) || contas[0])?.id || "", cartaoId: "", observacoes: "", anexo: null,
-    }, r.valor);
-    mostrarToast(`"${r.descricao}" — ${formatarMoeda(r.valor)} lançado`);
-    setTexto(""); setAberto(false);
-  };
-
-  if (!aberto) {
-    return (
-      <button onClick={() => setAberto(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: `1px solid ${pal.borda}`, color: pal.textoSuave, borderRadius: 8, padding: "8px 12px", fontSize: 13, cursor: "pointer" }}>
-        <Zap size={14} /> Entrada rápida
-      </button>
-    );
-  }
-  return (
-    <form onSubmit={lancar} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-      <input autoFocus type="text" placeholder='Ex.: "mercado 120 hoje" ou "uber 32 ontem"' value={texto} onChange={(e) => setTexto(e.target.value)} style={{ ...estiloInput(pal), width: 260 }} />
-      <Botao type="submit"><Zap size={14} /> Lançar</Botao>
-      <button type="button" onClick={() => setAberto(false)} style={{ border: "none", background: "none", color: pal.textoSuave, cursor: "pointer" }}><X size={16} /></button>
-    </form>
-  );
-}
-
-/* ============================================================
    19. APP RAIZ (provider + estado + migração + geração automática)
    ============================================================ */
 export default function App() {
@@ -3343,9 +3120,6 @@ export default function App() {
   const [sidebarAberta, setSidebarAberta] = useState(false);
   const [ultimoBackup, setUltimoBackupState] = useState(null);
   const [notificacoesAtivas, setNotificacoesAtivasState] = useState(false);
-  const [clientIdDrive, setClientIdDriveState] = useState("");
-  const [pin, setPinState] = useState("");
-  const [desbloqueado, setDesbloqueado] = useState(true);
   const [pedidoNovoLanc, setPedidoNovoLanc] = useState(false);
   const toastTimeoutRef = useRef(null);
   const lancamentosRef = useRef([]);
@@ -3435,9 +3209,6 @@ export default function App() {
       setTemaState(cfg.tema || "claro");
       setCorState(cfg.cor || "#1B2A4A");
       setNotificacoesAtivasState(!!cfg.notificacoesAtivas);
-      setClientIdDriveState(cfg.clientIdDrive || "");
-      setPinState(cfg.pin || "");
-      setDesbloqueado(!cfg.pin);
       const ub = await ler("ultimoBackup");
       setUltimoBackupState(ub);
       const me = (await ler("metasEconomia")) || [];
@@ -3716,6 +3487,31 @@ export default function App() {
   };
 
 
+  // Limpa os lançamentos e deixa tudo pronto para lançar do zero (ver componentes/Recomecar.jsx).
+  const recomecarDoZero = ({ manter, saldos }) => {
+    salvar("historico", [], setHistoricoState);
+    if (manter.contasCartoes) {
+      salvar("contas", contas.map((c) => (saldos[c.id] !== undefined ? { ...c, saldoInicial: saldos[c.id] } : c)), setContasState);
+    } else {
+      salvar("contas", [{ id: CONTA_PADRAO_ID, nome: "Conta principal", tipo: "conta", saldoInicial: 0, cor: "#1B2A4A", padrao: true }], setContasState);
+      salvar("cartoes", [], setCartoesState);
+    }
+    if (!manter.metas) { salvar("metasEconomia", [], setMetasEconomiaState); salvar("investimentos", [], setInvestimentosState); }
+    if (!manter.categorias) {
+      salvar("categoriasDespesa", CATEGORIAS_DESPESA_PADRAO, setCategoriasDespesaState);
+      salvar("categoriasReceita", CATEGORIAS_RECEITA_PADRAO, setCategoriasReceitaState);
+      salvar("metas", {}, setMetasState);
+      salvar("favoritos", [], setFavoritosState);
+    }
+    // recorrentes mantidas: volta um mês para recriar os lançamentos deste mês; senão, apaga
+    const anterior = addMeses(`${mesAtual()}-01`, -1).slice(0, 7);
+    const recs = manter.recorrentes ? recorrentes.map((r) => ({ ...r, ultimoMesGerado: anterior, mesesIgnorados: [] })) : [];
+    const gerado = gerarRecorrentes({ recorrentes: recs, lancamentos: [], mesAlvo: mesAtual() });
+    salvar("lancamentos", gerado.lancamentos, setLancamentosState);
+    salvar("recorrentes", gerado.recorrentes, setRecorrentesState);
+    setMesSelecionado(mesAtual());
+    mostrarToast("Tudo limpo. Pode lançar do zero!");
+  };
   const restaurarBackup = (dados) => {
     if (dados.lancamentos) salvar("lancamentos", dados.lancamentos, setLancamentosState);
     if (dados.contas) salvar("contas", dados.contas, setContasState);
@@ -3731,18 +3527,11 @@ export default function App() {
   };
 
   const salvarConfig = (novosCampos) => {
-    const cfg = { tema, cor, notificacoesAtivas, clientIdDrive, pin, ...novosCampos };
+    const cfg = { tema, cor, notificacoesAtivas, ...novosCampos };
     window.storage.set("config", JSON.stringify(cfg), false).catch(() => {});
   };
   const setTema = (t) => { setTemaState(t); salvarConfig({ tema: t }); };
   const setCor = (c) => { setCorState(c); salvarConfig({ cor: c }); };
-  const salvarClientIdDrive = (v) => { setClientIdDriveState(v); salvarConfig({ clientIdDrive: v }); };
-  const definirPin = (novoPin) => { setPinState(novoPin); salvarConfig({ pin: novoPin }); mostrarToast(novoPin ? "PIN definido" : "PIN removido"); };
-  const desbloquearComPin = (tentativa) => {
-    if (tentativa === "__RESET__") { setPinState(""); salvarConfig({ pin: "" }); setDesbloqueado(true); return true; }
-    if (tentativa === pin) { setDesbloqueado(true); return true; }
-    return false;
-  };
   const ativarNotificacoes = async () => {
     if (!("Notification" in window)) { mostrarToast("Seu navegador não suporta notificações"); return; }
     const permissao = await Notification.requestPermission();
@@ -3780,24 +3569,18 @@ export default function App() {
     metasEconomia, adicionarMetaEconomia, excluirMetaEconomia, adicionarAporte,
     adicionarRecorrente, editarRecorrente, excluirRecorrente,
     notificacoesAtivas, ativarNotificacoes, desativarNotificacoes,
-    clientIdDrive, salvarClientIdDrive,
-    pin, definirPin,
     historico,
     viagens, adicionarViagem, editarViagem, excluirViagem,
     tema, setTema,
     cor, setCor,
     pal, mostrarToast, setPagina,
     pedidoNovoLanc, consumirPedidoNovoLanc,
-    pagarFaturaCartao,
+    pagarFaturaCartao, recomecarDoZero,
     investimentos, mercado, adicionarInvestimento, editarInvestimento, excluirInvestimento, movimentarInvestimento, atualizarMercado,
   };
 
   if (!pronto) {
     return <div style={{ padding: 40, fontFamily: "Inter, sans-serif", color: "#6B6459" }}>Carregando seu financeiro...</div>;
-  }
-
-  if (pin && !desbloqueado) {
-    return <TelaBloqueio pal={pal} onDesbloquear={desbloquearComPin} />;
   }
 
   const paginas = {

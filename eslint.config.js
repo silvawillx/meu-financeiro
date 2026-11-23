@@ -13,6 +13,6 @@ export default [
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
     plugins: { react, "react-hooks": reactHooks },
-    rules: { "react-hooks/exhaustive-deps": "off", "no-undef": "error", "react/jsx-uses-vars": "error", "react/jsx-uses-react": "error" },
+    rules: { "react-hooks/exhaustive-deps": "off", "no-undef": "error", "react/jsx-uses-vars": "error", "react/jsx-no-undef": "error", "react/jsx-uses-react": "error" },
   },
 ];
